@@ -9,3 +9,4 @@ pnpm-debug.log*
 coverage/
 .vscode/
 *.tgz
+session.txt
