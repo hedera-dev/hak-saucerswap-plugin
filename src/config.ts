@@ -1,4 +1,5 @@
 import type { PoolVersion, SaucerSwapConfig } from "./types";
+import { NETWORK_DEFAULTS, type SaucerSwapNetworkDefaults } from "./networks";
 
 const DEFAULT_CONFIG: SaucerSwapConfig = {
   baseUrl: "https://api.saucerswap.finance",
@@ -43,6 +44,13 @@ const readPoolVersion = (value: string | undefined): PoolVersion | undefined => 
   return undefined;
 };
 
+const readNetwork = (value: string | undefined): "mainnet" | "testnet" | undefined => {
+  if (value === "mainnet" || value === "testnet") {
+    return value;
+  }
+  return undefined;
+};
+
 const readContextConfig = (context: unknown): Partial<SaucerSwapConfig> => {
   if (!context || typeof context !== "object") {
     return {};
@@ -59,6 +67,8 @@ const readContextConfig = (context: unknown): Partial<SaucerSwapConfig> => {
 
 export const resolveSaucerSwapConfig = (context?: unknown): SaucerSwapConfig => {
   const ctxConfig = readContextConfig(context);
+  const network = ctxConfig.network ?? readNetwork(process.env.SAUCERSWAP_NETWORK);
+  const networkDefaults: Partial<SaucerSwapNetworkDefaults> = network ? (NETWORK_DEFAULTS[network] ?? {}) : {};
   const envAliases = readTokenAliases(process.env.SAUCERSWAP_TOKEN_ALIASES);
   const envDefaultVersion = readPoolVersion(process.env.SAUCERSWAP_DEFAULT_POOL_VERSION);
 
@@ -70,12 +80,21 @@ export const resolveSaucerSwapConfig = (context?: unknown): SaucerSwapConfig => 
       ctxConfig.timeoutMs ?? toNumber(process.env.SAUCERSWAP_TIMEOUT_MS, DEFAULT_CONFIG.timeoutMs),
     retries: ctxConfig.retries ?? toNumber(process.env.SAUCERSWAP_RETRIES, DEFAULT_CONFIG.retries),
     apiKey: ctxConfig.apiKey ?? process.env.SAUCERSWAP_API_KEY,
-    routerContractId: ctxConfig.routerContractId ?? process.env.SAUCERSWAP_ROUTER_CONTRACT_ID,
+    network,
+    routerContractId:
+      ctxConfig.routerContractId ??
+      process.env.SAUCERSWAP_ROUTER_CONTRACT_ID ??
+      networkDefaults.routerContractId,
     routerV2ContractId:
-      ctxConfig.routerV2ContractId ?? process.env.SAUCERSWAP_ROUTER_V2_CONTRACT_ID,
+      ctxConfig.routerV2ContractId ??
+      process.env.SAUCERSWAP_ROUTER_V2_CONTRACT_ID ??
+      networkDefaults.routerV2ContractId,
     wrappedHbarTokenId:
-      ctxConfig.wrappedHbarTokenId ?? process.env.SAUCERSWAP_WRAPPED_HBAR_TOKEN_ID,
+      ctxConfig.wrappedHbarTokenId ??
+      process.env.SAUCERSWAP_WRAPPED_HBAR_TOKEN_ID ??
+      networkDefaults.wrappedHbarTokenId,
     tokenAliases: {
+      ...(networkDefaults.tokenAliases ?? {}),
       ...envAliases,
       ...(ctxConfig.tokenAliases ?? {}),
     },

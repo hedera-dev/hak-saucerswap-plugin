@@ -21,7 +21,7 @@ import {
   requireTokenId,
   tokenIdToSolidityAddress,
 } from "../utils/tokens";
-import { parseUnits } from "../utils/units";
+import { parseUnits, toUint256 } from "../utils/units";
 
 const addLiquidityInputSchema = z.object({
   tokenA: z.string().describe("First token ID"),
@@ -148,12 +148,12 @@ export class AddLiquidityTool extends BaseTool<AddLiquidityInput, AddLiquidityIn
       const params = new ContractFunctionParameters()
         .addAddress(tokenIdToSolidityAddress(requireTokenId(tokenAId)))
         .addAddress(tokenIdToSolidityAddress(requireTokenId(tokenBId)))
-        .addUint256(amountADesired)
-        .addUint256(amountBDesired)
-        .addUint256(amountAMin)
-        .addUint256(amountBMin)
+        .addUint256(toUint256(amountADesired))
+        .addUint256(toUint256(amountBDesired))
+        .addUint256(toUint256(amountAMin))
+        .addUint256(toUint256(amountBMin))
         .addAddress(toAddress)
-        .addUint256(deadline);
+        .addUint256(toUint256(deadline));
 
       const transaction = new ContractExecuteTransaction()
         .setContractId(contractIdFromString(routerContractId))
@@ -255,11 +255,11 @@ export class RemoveLiquidityTool extends BaseTool<RemoveLiquidityInput, RemoveLi
       const params = new ContractFunctionParameters()
         .addAddress(tokenIdToSolidityAddress(requireTokenId(tokenAId)))
         .addAddress(tokenIdToSolidityAddress(requireTokenId(tokenBId)))
-        .addUint256(lpAmount)
-        .addUint256(minAmountA)
-        .addUint256(minAmountB)
+        .addUint256(toUint256(lpAmount))
+        .addUint256(toUint256(minAmountA))
+        .addUint256(toUint256(minAmountB))
         .addAddress(toAddress)
-        .addUint256(deadline);
+        .addUint256(toUint256(deadline));
 
       const transaction = new ContractExecuteTransaction()
         .setContractId(contractIdFromString(routerContractId))

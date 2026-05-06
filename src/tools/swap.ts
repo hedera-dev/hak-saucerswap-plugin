@@ -22,7 +22,7 @@ import {
   requireTokenId,
   tokenIdToSolidityAddress,
 } from "../utils/tokens";
-import { parseUnits } from "../utils/units";
+import { parseUnits, toUint256 } from "../utils/units";
 
 const swapInputSchema = z.object({
   fromToken: z.string().describe("Token ID to swap from (e.g., 'HBAR' or '0.0.123456')"),
@@ -153,11 +153,11 @@ export class SwapTool extends BaseTool<SwapInput, SwapInput> {
       ];
 
       const params = new ContractFunctionParameters()
-        .addUint256(amountInSmallest)
-        .addUint256(minOutSmallest)
+        .addUint256(toUint256(amountInSmallest))
+        .addUint256(toUint256(minOutSmallest))
         .addAddressArray(path)
         .addAddress(toAddress)
-        .addUint256(deadline);
+        .addUint256(toUint256(deadline));
 
       const transaction = new ContractExecuteTransaction()
         .setContractId(contractIdFromString(routerContractId))

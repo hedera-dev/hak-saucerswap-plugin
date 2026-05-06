@@ -4,6 +4,8 @@ import { addLiquidityTool, removeLiquidityTool } from "./tools/liquidity";
 import { poolsTool } from "./tools/pools";
 import { quoteTool } from "./tools/quote";
 import { swapTool } from "./tools/swap";
+export { SAUCERSWAP_MAINNET, SAUCERSWAP_TESTNET } from "./networks";
+export type { SaucerSwapNetworkDefaults } from "./networks";
 
 export const saucerswapPluginToolNames = {
   SAUCERSWAP_GET_SWAP_QUOTE_TOOL: "saucerswap_get_swap_quote",

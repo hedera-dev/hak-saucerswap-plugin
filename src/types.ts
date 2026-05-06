@@ -70,6 +70,7 @@ export interface SaucerSwapConfig {
   timeoutMs: number;
   retries: number;
   apiKey?: string;
+  network?: "mainnet" | "testnet";
   routerContractId?: string;
   routerV2ContractId?: string;
   wrappedHbarTokenId?: string;

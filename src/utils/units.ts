@@ -1,3 +1,9 @@
+import Long from "long";
+
+/** Convert a base-unit string or number to a Long for ContractFunctionParameters.addUint256. */
+export const toUint256 = (value: string | number): Long =>
+  typeof value === "string" ? Long.fromString(value) : Long.fromNumber(value);
+
 export const parseUnits = (amount: string, decimals: number): string => {
   if (!amount || typeof amount !== "string") {
     throw new Error("Amount must be a non-empty string.");
