@@ -1,5 +1,15 @@
-import { ContractExecuteTransaction, ContractFunctionParameters } from "@hashgraph/sdk";
-import type { Tool } from "hedera-agent-kit";
+import {
+  BaseTool,
+  type Context,
+  handleTransaction,
+  type RawTransactionResponse,
+} from "@hashgraph/hedera-agent-kit";
+import {
+  type Client,
+  ContractExecuteTransaction,
+  ContractFunctionParameters,
+  Transaction,
+} from "@hiero-ledger/sdk";
 import { z } from "zod";
 import { createSaucerSwapClient } from "../api/client";
 import { resolveSaucerSwapConfig } from "../config";
@@ -12,7 +22,6 @@ import {
   requireTokenId,
   tokenIdToSolidityAddress,
 } from "../utils/tokens";
-import { finalizeTransaction } from "../utils/transactions";
 import { parseUnits } from "../utils/units";
 
 const swapInputSchema = z.object({
@@ -29,6 +38,26 @@ const swapInputSchema = z.object({
     .optional()
     .describe("Transaction deadline in minutes from now or a unix timestamp"),
 });
+
+type SwapInput = z.infer<typeof swapInputSchema>;
+
+type SwapExtras = {
+  estimatedOutput: string;
+  minOutput: string;
+  priceImpact: number | null;
+  route: string[];
+};
+
+type SwapCorePayload = {
+  transaction: Transaction;
+  extras: SwapExtras;
+};
+
+const isSwapCorePayload = (value: unknown): value is SwapCorePayload =>
+  typeof value === "object" && value !== null && "transaction" in value;
+
+const swapPostProcess = (response: RawTransactionResponse) =>
+  `SaucerSwap swap submitted. Status: ${response.status}. Transaction ID: ${response.transactionId}`;
 
 const resolveDeadline = (deadlineInput: number | undefined, defaultMinutes: number): number => {
   const now = Math.floor(Date.now() / 1000);
@@ -49,13 +78,17 @@ const expectedToSmallest = (amount: string, decimals: number): string => {
   return amount.includes(".") ? parseUnits(amount, decimals) : amount;
 };
 
-export const swapTool: Tool = {
-  method: "saucerswap_swap_tokens",
-  name: "SaucerSwap Swap Tokens",
-  description: "Execute a token swap on SaucerSwap DEX.",
-  parameters: swapInputSchema,
-  execute: async (client, context, params) => {
-    const args = swapInputSchema.parse(params);
+export class SwapTool extends BaseTool<SwapInput, SwapInput> {
+  method = "saucerswap_swap_tokens";
+  name = "SaucerSwap Swap Tokens";
+  description = "Execute a token swap on SaucerSwap DEX.";
+  parameters = swapInputSchema;
+
+  async normalizeParams(params: SwapInput, _context: Context, _client: Client): Promise<SwapInput> {
+    return swapInputSchema.parse(params);
+  }
+
+  async coreAction(args: SwapInput, context: Context, client: Client) {
     const config = resolveSaucerSwapConfig(context);
     const operatorAccountId = client?.operatorAccountId?.toString();
     const slippageTolerance = args.slippageTolerance ?? 0.5;
@@ -131,17 +164,37 @@ export const swapTool: Tool = {
         .setGas(config.gasLimit)
         .setFunction("swapExactTokensForTokens", params);
 
-      return await finalizeTransaction(transaction, client, context, {
-        estimatedOutput: quote.expectedOutput,
-        minOutput: minOutSmallest,
-        priceImpact: quote.priceImpact,
-        route: quote.route,
-      });
+      const payload: SwapCorePayload = {
+        transaction,
+        extras: {
+          estimatedOutput: quote.expectedOutput,
+          minOutput: minOutSmallest,
+          priceImpact: quote.priceImpact,
+          route: quote.route,
+        },
+      };
+      return payload;
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       };
     }
-  },
-};
+  }
+
+  override async shouldSecondaryAction(coreActionResult: unknown, _context: Context) {
+    return isSwapCorePayload(coreActionResult);
+  }
+
+  async secondaryAction(payload: SwapCorePayload, client: Client, context: Context) {
+    const result = await handleTransaction(
+      payload.transaction,
+      client,
+      context,
+      swapPostProcess,
+    );
+    return { ...result, ...payload.extras };
+  }
+}
+
+export const swapTool = new SwapTool();

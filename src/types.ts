@@ -62,12 +62,14 @@ export interface SaucerSwapClientOptions {
   baseUrl?: string;
   timeoutMs?: number;
   retries?: number;
+  apiKey?: string;
 }
 
 export interface SaucerSwapConfig {
   baseUrl: string;
   timeoutMs: number;
   retries: number;
+  apiKey?: string;
   routerContractId?: string;
   routerV2ContractId?: string;
   wrappedHbarTokenId?: string;

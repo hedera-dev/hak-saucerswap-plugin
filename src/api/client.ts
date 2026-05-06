@@ -35,6 +35,7 @@ export class SaucerSwapClient {
       axios.create({
         baseURL: options.baseUrl ?? "https://api.saucerswap.finance",
         timeout: options.timeoutMs ?? 10_000,
+        headers: options.apiKey ? { "x-api-key": options.apiKey } : undefined,
       });
   }
 

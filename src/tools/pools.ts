@@ -1,4 +1,5 @@
-import type { Tool } from "hedera-agent-kit";
+import { BaseTool, type Context } from "@hashgraph/hedera-agent-kit";
+import type { Client } from "@hiero-ledger/sdk";
 import { z } from "zod";
 import { createSaucerSwapClient } from "../api/client";
 import { resolveSaucerSwapConfig } from "../config";
@@ -11,13 +12,23 @@ const poolsInputSchema = z.object({
   limit: z.number().int().positive().optional().describe("Maximum number of pools to return"),
 });
 
-export const poolsTool: Tool = {
-  method: "saucerswap_get_pools",
-  name: "SaucerSwap Get Pools",
-  description: "Query SaucerSwap liquidity pools and reserves.",
-  parameters: poolsInputSchema,
-  execute: async (_client, context, params) => {
-    const args = poolsInputSchema.parse(params);
+type PoolsInput = z.infer<typeof poolsInputSchema>;
+
+export class PoolsTool extends BaseTool<PoolsInput, PoolsInput> {
+  method = "saucerswap_get_pools";
+  name = "SaucerSwap Get Pools";
+  description = "Query SaucerSwap liquidity pools and reserves.";
+  parameters = poolsInputSchema;
+
+  async normalizeParams(
+    params: PoolsInput,
+    _context: Context,
+    _client: Client,
+  ): Promise<PoolsInput> {
+    return poolsInputSchema.parse(params);
+  }
+
+  async coreAction(args: PoolsInput, context: Context, _client: Client) {
     const config = resolveSaucerSwapConfig(context);
     const api =
       (context as { saucerswapClient?: ReturnType<typeof createSaucerSwapClient> })
@@ -55,5 +66,15 @@ export const poolsTool: Tool = {
         error: error instanceof Error ? error.message : "Unknown error",
       };
     }
-  },
-};
+  }
+
+  override async shouldSecondaryAction(_coreActionResult: unknown, _context: Context) {
+    return false;
+  }
+
+  async secondaryAction(_request: unknown, _client: Client, _context: Context) {
+    return null;
+  }
+}
+
+export const poolsTool = new PoolsTool();

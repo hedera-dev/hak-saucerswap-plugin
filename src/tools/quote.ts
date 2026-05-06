@@ -1,4 +1,5 @@
-import type { Tool } from "hedera-agent-kit";
+import { BaseTool, type Context } from "@hashgraph/hedera-agent-kit";
+import type { Client } from "@hiero-ledger/sdk";
 import { z } from "zod";
 import { createSaucerSwapClient } from "../api/client";
 import { resolveSaucerSwapConfig } from "../config";
@@ -17,17 +18,27 @@ const quoteInputSchema = z.object({
     .describe("Maximum slippage tolerance percentage"),
 });
 
-export const quoteTool: Tool = {
-  method: "saucerswap_get_swap_quote",
-  name: "SaucerSwap Get Swap Quote",
-  description: "Get a price quote for swapping tokens on SaucerSwap.",
-  parameters: quoteInputSchema,
-  execute: async (_client, context, params) => {
-    const args = quoteInputSchema.parse(params);
+type QuoteInput = z.infer<typeof quoteInputSchema>;
+
+export class QuoteTool extends BaseTool<QuoteInput, QuoteInput> {
+  method = "saucerswap_get_swap_quote";
+  name = "SaucerSwap Get Swap Quote";
+  description = "Get a price quote for swapping tokens on SaucerSwap.";
+  parameters = quoteInputSchema;
+
+  async normalizeParams(
+    params: QuoteInput,
+    _context: Context,
+    _client: Client,
+  ): Promise<QuoteInput> {
+    return quoteInputSchema.parse(params);
+  }
+
+  async coreAction(args: QuoteInput, context: Context, _client: Client) {
     const config = resolveSaucerSwapConfig(context);
-    const client = (context as { saucerswapClient?: ReturnType<typeof createSaucerSwapClient> })
+    const cachedApi = (context as { saucerswapClient?: ReturnType<typeof createSaucerSwapClient> })
       .saucerswapClient;
-    const api = client ?? createSaucerSwapClient(config);
+    const api = cachedApi ?? createSaucerSwapClient(config);
     const slippageTolerance = args.slippageTolerance ?? 0.5;
 
     try {
@@ -79,5 +90,15 @@ export const quoteTool: Tool = {
         error: error instanceof Error ? error.message : "Unknown error",
       };
     }
-  },
-};
+  }
+
+  override async shouldSecondaryAction(_coreActionResult: unknown, _context: Context) {
+    return false;
+  }
+
+  async secondaryAction(_request: unknown, _client: Client, _context: Context) {
+    return null;
+  }
+}
+
+export const quoteTool = new QuoteTool();

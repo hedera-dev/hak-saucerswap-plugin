@@ -69,6 +69,7 @@ export const resolveSaucerSwapConfig = (context?: unknown): SaucerSwapConfig => 
     timeoutMs:
       ctxConfig.timeoutMs ?? toNumber(process.env.SAUCERSWAP_TIMEOUT_MS, DEFAULT_CONFIG.timeoutMs),
     retries: ctxConfig.retries ?? toNumber(process.env.SAUCERSWAP_RETRIES, DEFAULT_CONFIG.retries),
+    apiKey: ctxConfig.apiKey ?? process.env.SAUCERSWAP_API_KEY,
     routerContractId: ctxConfig.routerContractId ?? process.env.SAUCERSWAP_ROUTER_CONTRACT_ID,
     routerV2ContractId:
       ctxConfig.routerV2ContractId ?? process.env.SAUCERSWAP_ROUTER_V2_CONTRACT_ID,

@@ -1,4 +1,4 @@
-import { AccountId, ContractId, TokenId } from "@hashgraph/sdk";
+import { AccountId, ContractId, TokenId } from "@hiero-ledger/sdk";
 import type { SaucerSwapConfig } from "../types";
 
 export const normalizeTokenAlias = (token: string, config: SaucerSwapConfig): string => {
