@@ -1,14 +1,14 @@
 import {
   BaseTool,
   type Context,
-  handleTransaction,
   type RawTransactionResponse,
+  handleTransaction,
 } from "@hashgraph/hedera-agent-kit";
 import {
   type Client,
   ContractExecuteTransaction,
   ContractFunctionParameters,
-  Transaction,
+  type Transaction,
 } from "@hiero-ledger/sdk";
 import { z } from "zod";
 import { createSaucerSwapClient } from "../api/client";
@@ -187,12 +187,7 @@ export class SwapTool extends BaseTool<SwapInput, SwapInput> {
   }
 
   async secondaryAction(payload: SwapCorePayload, client: Client, context: Context) {
-    const result = await handleTransaction(
-      payload.transaction,
-      client,
-      context,
-      swapPostProcess,
-    );
+    const result = await handleTransaction(payload.transaction, client, context, swapPostProcess);
     return { ...result, ...payload.extras };
   }
 }

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { Client } from "@hiero-ledger/sdk";
 import { AgentMode } from "@hashgraph/hedera-agent-kit";
+import { Client } from "@hiero-ledger/sdk";
 import { saucerswapPlugin } from "../dist/index.js";
 
 const requiredEnv = (name) => {

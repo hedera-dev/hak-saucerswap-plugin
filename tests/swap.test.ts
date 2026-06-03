@@ -36,7 +36,11 @@ describe("SwapTool.coreAction", () => {
   const tool = new SwapTool();
 
   it("returns error when client has no operator account", async () => {
-    const result = await tool.coreAction(baseArgs, makeContext(ROUTER) as never, makeClient() as never);
+    const result = await tool.coreAction(
+      baseArgs,
+      makeContext(ROUTER) as never,
+      makeClient() as never,
+    );
     expect(result).toMatchObject({ success: false, error: expect.stringContaining("operator") });
   });
 
@@ -46,16 +50,27 @@ describe("SwapTool.coreAction", () => {
       makeContext(ROUTER, { getTokenByIdOrSymbol: async () => null }) as never,
       makeClient(OPERATOR) as never,
     );
-    expect(result).toMatchObject({ success: false, error: expect.stringContaining("token metadata") });
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("token metadata"),
+    });
   });
 
   it("returns error when router contract ID is missing", async () => {
-    const result = await tool.coreAction(baseArgs, makeContext(undefined) as never, makeClient(OPERATOR) as never);
+    const result = await tool.coreAction(
+      baseArgs,
+      makeContext(undefined) as never,
+      makeClient(OPERATOR) as never,
+    );
     expect(result).toMatchObject({ success: false, error: expect.stringContaining("router") });
   });
 
   it("returns a core payload with a ContractExecuteTransaction on happy path", async () => {
-    const result = await tool.coreAction(baseArgs, makeContext(ROUTER) as never, makeClient(OPERATOR) as never);
+    const result = await tool.coreAction(
+      baseArgs,
+      makeContext(ROUTER) as never,
+      makeClient(OPERATOR) as never,
+    );
     expect(result).toHaveProperty("transaction");
     expect(result).toHaveProperty("extras");
     if ("extras" in result) {
@@ -76,7 +91,9 @@ describe("SwapTool.shouldSecondaryAction", () => {
   });
 
   it("returns false for an error result", async () => {
-    expect(await tool.shouldSecondaryAction({ success: false, error: "oops" }, {} as never)).toBe(false);
+    expect(await tool.shouldSecondaryAction({ success: false, error: "oops" }, {} as never)).toBe(
+      false,
+    );
   });
 
   it("returns false for null", async () => {

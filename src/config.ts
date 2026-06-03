@@ -1,5 +1,5 @@
-import type { PoolVersion, SaucerSwapConfig } from "./types";
 import { NETWORK_DEFAULTS, type SaucerSwapNetworkDefaults } from "./networks";
+import type { PoolVersion, SaucerSwapConfig } from "./types";
 
 const DEFAULT_CONFIG: SaucerSwapConfig = {
   baseUrl: "https://api.saucerswap.finance",
@@ -68,7 +68,9 @@ const readContextConfig = (context: unknown): Partial<SaucerSwapConfig> => {
 export const resolveSaucerSwapConfig = (context?: unknown): SaucerSwapConfig => {
   const ctxConfig = readContextConfig(context);
   const network = ctxConfig.network ?? readNetwork(process.env.SAUCERSWAP_NETWORK);
-  const networkDefaults: Partial<SaucerSwapNetworkDefaults> = network ? (NETWORK_DEFAULTS[network] ?? {}) : {};
+  const networkDefaults: Partial<SaucerSwapNetworkDefaults> = network
+    ? (NETWORK_DEFAULTS[network] ?? {})
+    : {};
   const envAliases = readTokenAliases(process.env.SAUCERSWAP_TOKEN_ALIASES);
   const envDefaultVersion = readPoolVersion(process.env.SAUCERSWAP_DEFAULT_POOL_VERSION);
 
