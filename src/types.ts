@@ -31,15 +31,6 @@ export interface ApiLiquidityPool {
   tokenReserveB: string;
 }
 
-export interface ApiSwapQuote {
-  amountIn?: string;
-  amountOut?: string;
-  expectedOutput?: string;
-  priceImpact?: number;
-  route?: string[];
-  data?: unknown;
-}
-
 export interface ApiFarm {
   id?: number;
   poolId?: number;
@@ -51,11 +42,21 @@ export interface ApiFarm {
 }
 
 export interface SwapQuote {
+  /** Input amount in decimal units of the input token. */
   amountIn: string;
+  /** Quoted output in decimal units of the output token. */
   expectedOutput: string;
+  /** Percent versus the pools' spot price, including the 0.3% LP fee per hop. */
   priceImpact: number | null;
+  /** "HBAR" for native HBAR, token IDs otherwise. */
   route: string[];
-  raw: unknown;
+  raw: {
+    routerContractId: string;
+    /** Router path as token IDs (WHBAR stands in for native HBAR). */
+    path: string[];
+    /** `getAmountsOut` result in smallest units, one entry per path element. */
+    amounts: string[];
+  };
 }
 
 export interface SaucerSwapClientOptions {
@@ -71,6 +72,7 @@ export interface SaucerSwapConfig {
   retries: number;
   apiKey?: string;
   network?: "mainnet" | "testnet";
+  mirrorNodeUrl?: string;
   routerContractId?: string;
   routerV2ContractId?: string;
   wrappedHbarTokenId?: string;

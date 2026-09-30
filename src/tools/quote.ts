@@ -1,11 +1,11 @@
 import { BaseTool, type Context } from "@hashgraph/hedera-agent-kit";
 import type { Client } from "@hiero-ledger/sdk";
 import { z } from "zod";
-import { createSaucerSwapClient } from "../api/client";
 import { resolveSaucerSwapConfig } from "../config";
-import { applySlippageToAmount, calculatePriceImpact } from "../utils/amm";
-import { normalizeSwapQuote } from "../utils/quote";
-import { normalizeTokenAlias } from "../utils/tokens";
+import type { SwapQuote } from "../types";
+import { applySlippageToAmount } from "../utils/amm";
+import { prepareSwapQuote, resolveApiClients } from "../utils/swap-quote";
+import { formatUnits } from "../utils/units";
 
 const quoteInputSchema = z.object({
   fromToken: z.string().describe("Token ID to swap from (e.g., 'HBAR' or '0.0.123456')"),
@@ -23,7 +23,8 @@ type QuoteInput = z.infer<typeof quoteInputSchema>;
 export class QuoteTool extends BaseTool<QuoteInput, QuoteInput> {
   method = "saucerswap_get_swap_quote";
   name = "SaucerSwap Get Swap Quote";
-  description = "Get a price quote for swapping tokens on SaucerSwap.";
+  description =
+    "Get an on-chain price quote for swapping tokens on the SaucerSwap V1 router, with price impact and a slippage-adjusted minimum output.";
   parameters = quoteInputSchema;
 
   async normalizeParams(
@@ -34,54 +35,40 @@ export class QuoteTool extends BaseTool<QuoteInput, QuoteInput> {
     return quoteInputSchema.parse(params);
   }
 
-  async coreAction(args: QuoteInput, context: Context, _client: Client) {
+  async coreAction(args: QuoteInput, context: Context, client: Client) {
     const config = resolveSaucerSwapConfig(context);
-    const cachedApi = (context as { saucerswapClient?: ReturnType<typeof createSaucerSwapClient> })
-      .saucerswapClient;
-    const api = cachedApi ?? createSaucerSwapClient(config);
     const slippageTolerance = args.slippageTolerance ?? 0.5;
 
     try {
-      const fromToken = normalizeTokenAlias(args.fromToken, config);
-      const toToken = normalizeTokenAlias(args.toToken, config);
-      const fromTokenId = await api.resolveTokenId(fromToken);
-      const toTokenId = await api.resolveTokenId(toToken);
-      const rawQuote = await api.getSwapQuote({
-        fromToken: fromTokenId,
-        toToken: toTokenId,
+      const { api, mirror } = resolveApiClients(context, config, client);
+      const prepared = await prepareSwapQuote({
+        fromToken: args.fromToken,
+        toToken: args.toToken,
         amount: args.amount,
+        config,
+        api,
+        mirror,
       });
 
-      const normalized = normalizeSwapQuote(rawQuote, args.amount);
-
-      if (normalized.priceImpact === null) {
-        const pool = await api.getPoolByTokens(fromTokenId, toTokenId, config.defaultPoolVersion);
-        if (pool && rawQuote.amountIn && rawQuote.amountOut) {
-          const isAToB = pool.tokenA.id === fromTokenId;
-          const reserveIn = isAToB ? pool.tokenReserveA : pool.tokenReserveB;
-          const reserveOut = isAToB ? pool.tokenReserveB : pool.tokenReserveA;
-          normalized.priceImpact = calculatePriceImpact(
-            rawQuote.amountIn,
-            rawQuote.amountOut,
-            reserveIn,
-            reserveOut,
-          );
-        }
-      }
-
-      let minOutput: string | null = null;
-      if (normalized.expectedOutput.includes(".")) {
-        const expectedNumber = Number(normalized.expectedOutput);
-        minOutput = Number.isFinite(expectedNumber)
-          ? (expectedNumber * (1 - slippageTolerance / 100)).toString()
-          : null;
-      } else {
-        minOutput = applySlippageToAmount(normalized.expectedOutput, slippageTolerance);
-      }
+      const quote: SwapQuote = {
+        amountIn: formatUnits(prepared.quote.amountIn.toString(), prepared.from.decimals),
+        expectedOutput: prepared.expectedOutput,
+        priceImpact: prepared.quote.priceImpact,
+        route: prepared.route,
+        raw: {
+          routerContractId: prepared.routerContractId,
+          path: prepared.quote.path,
+          amounts: prepared.quote.amounts.map((amount) => amount.toString()),
+        },
+      };
+      const minOutput = formatUnits(
+        applySlippageToAmount(prepared.quote.amountOut.toString(), slippageTolerance),
+        prepared.to.decimals,
+      );
 
       return {
         success: true,
-        quote: normalized,
+        quote,
         minOutput,
       };
     } catch (error) {

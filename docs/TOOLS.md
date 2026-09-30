@@ -6,7 +6,8 @@ from the Hedera Agent Kit.
 
 Tools fall into two groups:
 
-- **Query tools** — call the SaucerSwap REST API; do not submit transactions to Hedera.
+- **Query tools**: call the SaucerSwap REST API or, for quotes, read the SaucerSwap V1 router
+  through the Hedera mirror node; do not submit transactions to Hedera.
 - **Transaction tools** — build a `ContractExecuteTransaction` and dispatch it through the agent
   kit's `handleTransaction` helper. The result depends on `context.mode`:
     - `AgentMode.AUTONOMOUS` → executes the transaction and returns receipt data.
@@ -30,17 +31,21 @@ For configuration of the underlying API key and router contract IDs, see
 
 **Type**: Query
 
-**Description**: Get a price quote for swapping tokens on SaucerSwap, including expected output,
-price impact, and a slippage-adjusted minimum.
+**Description**: Get an on-chain price quote for an exact-input swap on the SaucerSwap V1 router,
+including expected output, price impact, and a slippage-adjusted minimum.
+
+The quote comes from the router's `getAmountsOut(uint256,address[])`, executed as a read-only
+call through the mirror node `POST /api/v1/contracts/call`. This is free and needs no API key.
+SaucerSwap does not offer a REST quote endpoint (`/v1/swap/quote` returns 404).
 
 **Parameters**:
 
-| Name                | Type     | Required | Default | Description                                                                  |
-| ------------------- | -------- | -------- | ------- | ---------------------------------------------------------------------------- |
-| `fromToken`         | `string` | Yes      | —       | Token ID, alias (e.g. `"HBAR"`), or symbol resolvable via the SaucerSwap API. |
-| `toToken`           | `string` | Yes      | —       | Token ID, alias, or symbol resolvable via the SaucerSwap API.                |
-| `amount`            | `string` | Yes      | —       | Decimal-format amount of `fromToken` to quote (e.g. `"1.5"`).                |
-| `slippageTolerance` | `number` | No       | `0.5`   | Maximum slippage tolerance, in percent.                                      |
+| Name                | Type     | Required | Default | Description                                                                              |
+| ------------------- | -------- | -------- | ------- | ---------------------------------------------------------------------------------------- |
+| `fromToken`         | `string` | Yes      | n/a     | `"HBAR"` for native HBAR, a token ID, an alias, or a symbol resolvable via the SaucerSwap API. |
+| `toToken`           | `string` | Yes      | n/a     | Same as `fromToken`.                                                                     |
+| `amount`            | `string` | Yes      | n/a     | Decimal-format amount of `fromToken` to quote (e.g. `"1.5"`).                            |
+| `slippageTolerance` | `number` | No       | `0.5`   | Maximum slippage tolerance, in percent.                                                  |
 
 **Returns**:
 
@@ -48,17 +53,21 @@ price impact, and a slippage-adjusted minimum.
 {
   success: true,
   quote: {
-    amountIn: string,
-    expectedOutput: string,
+    amountIn: string,          // decimal units of fromToken
+    expectedOutput: string,    // decimal units of toToken
     priceImpact: number | null,
-    route: string[],
-    raw: unknown,        // raw payload from the SaucerSwap API
+    route: string[],           // e.g. ["HBAR", "0.0.731861"]
+    raw: {
+      routerContractId: string,
+      path: string[],          // token IDs; WHBAR stands in for native HBAR
+      amounts: string[],       // getAmountsOut result in smallest units
+    },
   },
-  minOutput: string | null,  // expectedOutput adjusted by slippageTolerance
+  minOutput: string,           // expectedOutput minus slippageTolerance, decimal units
 }
 ```
 
-On failure (e.g. API error, unknown token):
+On failure (e.g. unknown token, no pool for the pair, missing V1 router):
 
 ```ts
 { success: false, error: string }
@@ -68,13 +77,17 @@ On failure (e.g. API error, unknown token):
 
 - "Get a quote to swap 100 HBAR into SAUCE."
 - "What's the expected output for trading 0.5 USDC to HBAR?"
-- "Quote a 1000 SAUCE → USDC swap with 1% slippage."
+- "Quote a 1000 SAUCE to USDC swap with 1% slippage."
 
 **Notes & errors**:
 
-- `priceImpact` is `null` when the API doesn't supply it. The plugin attempts to compute it from
-  pool reserves before falling back to `null`.
-- Token aliases configured via `tokenAliases` are resolved before the API call.
+- The quoter tries the direct pair and, when neither side is WHBAR, a two-hop route through
+  WHBAR, and returns whichever yields more output.
+- `priceImpact` is measured against the spot price implied by each pool's `getReserves()`, so it
+  includes the 0.3% LP fee per hop. It is `null` when the reserves cannot be read.
+- Token decimals come from the SaucerSwap API token list, falling back to the mirror node.
+- The mirror node URL follows `network` (or the client's ledger); override it with
+  `mirrorNodeUrl`. See [`CONFIGURATION.md`](./CONFIGURATION.md).
 
 ---
 
@@ -82,16 +95,24 @@ On failure (e.g. API error, unknown token):
 
 **Type**: Transaction
 
-**Description**: Build (and optionally execute) a token swap on SaucerSwap with slippage
-protection. Routes through the configured v1 or v2 router based on `defaultPoolVersion`.
+**Description**: Build (and optionally execute) an exact-input swap on the SaucerSwap V1 router
+with slippage protection. The quote is taken on-chain exactly as in `saucerswap_get_swap_quote`.
+
+The router function depends on the token pair:
+
+| From | To   | Router function            | Payable amount |
+| ---- | ---- | -------------------------- | -------------- |
+| HBAR | HTS  | `swapExactETHForTokens`    | `amount` HBAR  |
+| HTS  | HBAR | `swapExactTokensForETH`    | none           |
+| HTS  | HTS  | `swapExactTokensForTokens` | none           |
 
 **Parameters**:
 
 | Name                | Type     | Required | Default                       | Description                                                                                  |
 | ------------------- | -------- | -------- | ----------------------------- | -------------------------------------------------------------------------------------------- |
-| `fromToken`         | `string` | Yes      | —                             | Token ID, alias, or symbol of the input token.                                               |
-| `toToken`           | `string` | Yes      | —                             | Token ID, alias, or symbol of the output token.                                              |
-| `amount`            | `string` | Yes      | —                             | Decimal-format amount of `fromToken` to swap.                                                |
+| `fromToken`         | `string` | Yes      | n/a                           | `"HBAR"` for native HBAR, or a token ID, alias, or symbol of the input token.                |
+| `toToken`           | `string` | Yes      | n/a                           | `"HBAR"` for native HBAR, or a token ID, alias, or symbol of the output token.               |
+| `amount`            | `string` | Yes      | n/a                           | Decimal-format amount of `fromToken` to swap.                                                |
 | `slippageTolerance` | `number` | No       | `0.5`                         | Maximum slippage tolerance, in percent.                                                      |
 | `deadline`          | `number` | No       | `deadlineMinutes` from config | Either minutes from now, or a Unix timestamp (in seconds) more than 60 seconds in the future. |
 
@@ -108,8 +129,8 @@ protection. Routes through the configured v1 or v2 router based on `defaultPoolV
     scheduleId: ScheduleId | null,
   },
   humanMessage: string,    // "SaucerSwap swap submitted. Status: ..."
-  estimatedOutput: string,
-  minOutput: string,
+  estimatedOutput: string, // decimal units of toToken
+  minOutput: string,       // decimal units of toToken, enforced on-chain as amountOutMin
   priceImpact: number | null,
   route: string[],
 }
@@ -127,7 +148,12 @@ protection. Routes through the configured v1 or v2 router based on `defaultPoolV
 }
 ```
 
-On configuration or pre-flight failure (e.g. missing operator, missing router contract):
+Before the transaction is dispatched, `coreAction` returns
+`{ transaction, extras: { estimatedOutput, minOutput, priceImpact, route } }`, which is the shape
+hooks and policies (for example `hak-jev-plugin`) inspect.
+
+On configuration or pre-flight failure (e.g. missing operator, missing V1 router, missing
+allowance):
 
 ```ts
 { success: false, error: string }
@@ -139,11 +165,33 @@ On configuration or pre-flight failure (e.g. missing operator, missing router co
 - "Trade 10 USDC into HBAR with 0.3% slippage."
 - "Convert 500 SAUCE to USDC and set a 30-minute deadline."
 
+**Router allowance for HTS input**:
+
+The router pulls HTS input tokens from the operator with `transferFrom`, so the operator must
+first grant the router contract's account a fungible token allowance of at least `amount`. HBAR
+input needs no allowance. Before building an HTS-input swap the tool reads the current allowance
+from the mirror node and, if it is too low, returns an error that names the token, spender and
+required amount instead of submitting a transaction that would revert. Grant it with the Hedera
+Agent Kit core `approve_token_allowance_tool` (spender = the V1 router ID, e.g. `0.0.3045981` on
+mainnet, `0.0.19264` on testnet), or with the SDK:
+
+```ts
+await new AccountAllowanceApproveTransaction()
+  .approveTokenAllowance(tokenId, operatorId, "0.0.3045981", amountInSmallestUnits)
+  .execute(client);
+```
+
+The mirror node can take a few seconds to reflect a new allowance. If the allowance lookup itself
+fails, the swap is built anyway and the network decides.
+
 **Notes & errors**:
 
 - The Hedera client must have an operator account configured; otherwise the tool returns an error
-  result without building a transaction.
-- The router contract ID corresponding to `defaultPoolVersion` must be configured.
+  result without building a transaction. Output is sent to the operator account, which must be
+  associated with the output token (or have a free auto-association slot).
+- Swaps always use the V1 router (`routerContractId`), whatever `defaultPoolVersion` says. The V2
+  router has a different interface and is not used for swaps.
+- `wrappedHbarTokenId` is required whenever either side is HBAR.
 
 ---
 

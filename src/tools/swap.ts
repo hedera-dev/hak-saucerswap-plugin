@@ -8,24 +8,26 @@ import {
   type Client,
   ContractExecuteTransaction,
   ContractFunctionParameters,
+  Hbar,
   type Transaction,
 } from "@hiero-ledger/sdk";
 import { z } from "zod";
-import { createSaucerSwapClient } from "../api/client";
 import { resolveSaucerSwapConfig } from "../config";
 import { applySlippageToAmount } from "../utils/amm";
-import { normalizeSwapQuote } from "../utils/quote";
+import { prepareSwapQuote, resolveApiClients } from "../utils/swap-quote";
 import {
   accountIdToSolidityAddress,
   contractIdFromString,
-  normalizeTokenAlias,
-  requireTokenId,
   tokenIdToSolidityAddress,
 } from "../utils/tokens";
-import { parseUnits, toUint256 } from "../utils/units";
+import { formatUnits, toUint256 } from "../utils/units";
 
 const swapInputSchema = z.object({
-  fromToken: z.string().describe("Token ID to swap from (e.g., 'HBAR' or '0.0.123456')"),
+  fromToken: z
+    .string()
+    .describe(
+      "Token to swap from: 'HBAR' for native HBAR, or a token ID/symbol. HTS tokens need a token allowance for the SaucerSwap V1 router first.",
+    ),
   toToken: z.string().describe("Token ID to swap to"),
   amount: z.string().describe("Amount to swap (decimal format)"),
   slippageTolerance: z
@@ -70,18 +72,20 @@ const resolveDeadline = (deadlineInput: number | undefined, defaultMinutes: numb
   return now + Math.round(deadlineInput) * 60;
 };
 
-const amountToSmallest = (amount: string, decimals: number): string => {
-  return parseUnits(amount, decimals);
-};
-
-const expectedToSmallest = (amount: string, decimals: number): string => {
-  return amount.includes(".") ? parseUnits(amount, decimals) : amount;
-};
+const allowanceError = (
+  tokenId: string,
+  owner: string,
+  router: string,
+  required: string,
+  current: string,
+) =>
+  `The SaucerSwap router ${router} needs a token allowance of at least ${required} ${tokenId} from ${owner} to pull the swap input (current allowance: ${current}). Approve it first, for example with the Hedera Agent Kit approve_token_allowance_tool using spender ${router}, then retry the swap.`;
 
 export class SwapTool extends BaseTool<SwapInput, SwapInput> {
   method = "saucerswap_swap_tokens";
   name = "SaucerSwap Swap Tokens";
-  description = "Execute a token swap on SaucerSwap DEX.";
+  description =
+    "Execute an exact-input token swap on the SaucerSwap V1 router. Supports HBAR and HTS tokens on either side. Swapping from an HTS token requires a prior token allowance for the router.";
   parameters = swapInputSchema;
 
   async normalizeParams(params: SwapInput, _context: Context, _client: Client): Promise<SwapInput> {
@@ -101,76 +105,76 @@ export class SwapTool extends BaseTool<SwapInput, SwapInput> {
     }
 
     try {
-      const api =
-        (context as { saucerswapClient?: ReturnType<typeof createSaucerSwapClient> })
-          .saucerswapClient ?? createSaucerSwapClient(config);
+      const { api, mirror } = resolveApiClients(context, config, client);
+      const { from, to, quote, routerContractId, expectedOutput, route } = await prepareSwapQuote({
+        fromToken: args.fromToken,
+        toToken: args.toToken,
+        amount: args.amount,
+        config,
+        api,
+        mirror,
+      });
 
-      const fromTokenAlias = normalizeTokenAlias(args.fromToken, config);
-      const toTokenAlias = normalizeTokenAlias(args.toToken, config);
-      const fromTokenId = await api.resolveTokenId(fromTokenAlias);
-      const toTokenId = await api.resolveTokenId(toTokenAlias);
-
-      const fromTokenMeta = await api.getTokenByIdOrSymbol(fromTokenId);
-      const toTokenMeta = await api.getTokenByIdOrSymbol(toTokenId);
-
-      if (!fromTokenMeta || !toTokenMeta) {
-        return {
-          success: false,
-          error: "Unable to resolve token metadata from SaucerSwap API.",
-        };
+      // The router pulls HTS input tokens with transferFrom, so the operator must have granted it
+      // an allowance. Fail early with instructions instead of submitting a transaction that
+      // reverts. If the mirror node cannot answer, let the network decide.
+      if (!from.isHbar) {
+        const allowance = await mirror
+          .getTokenAllowance(operatorAccountId, routerContractId, from.tokenId)
+          .catch(() => null);
+        if (allowance !== null && allowance < quote.amountIn) {
+          return {
+            success: false,
+            error: allowanceError(
+              from.tokenId,
+              operatorAccountId,
+              routerContractId,
+              args.amount,
+              formatUnits(allowance.toString(), from.decimals),
+            ),
+          };
+        }
       }
 
-      const quote = normalizeSwapQuote(
-        await api.getSwapQuote({
-          fromToken: fromTokenId,
-          toToken: toTokenId,
-          amount: args.amount,
-        }),
-        args.amount,
-      );
-
-      const amountInSmallest = amountToSmallest(args.amount, fromTokenMeta.decimals);
-      const expectedOutSmallest = expectedToSmallest(quote.expectedOutput, toTokenMeta.decimals);
-      const minOutSmallest = applySlippageToAmount(expectedOutSmallest, slippageTolerance);
-
-      const routerContractId =
-        config.defaultPoolVersion === "v2"
-          ? (config.routerV2ContractId ?? config.routerContractId)
-          : (config.routerContractId ?? config.routerV2ContractId);
-
-      if (!routerContractId) {
-        return {
-          success: false,
-          error: "Missing SaucerSwap router contract ID configuration.",
-        };
-      }
-
+      const minOutSmallest = applySlippageToAmount(quote.amountOut.toString(), slippageTolerance);
       const deadline = resolveDeadline(args.deadline, config.deadlineMinutes);
-      const toAddress = accountIdToSolidityAddress(operatorAccountId);
-      const path = [
-        tokenIdToSolidityAddress(requireTokenId(fromTokenId)),
-        tokenIdToSolidityAddress(requireTokenId(toTokenId)),
-      ];
-
-      const params = new ContractFunctionParameters()
-        .addUint256(toUint256(amountInSmallest))
-        .addUint256(toUint256(minOutSmallest))
-        .addAddressArray(path)
-        .addAddress(toAddress)
-        .addUint256(toUint256(deadline));
+      const recipient = accountIdToSolidityAddress(operatorAccountId);
+      const path = quote.path.map(tokenIdToSolidityAddress);
 
       const transaction = new ContractExecuteTransaction()
         .setContractId(contractIdFromString(routerContractId))
-        .setGas(config.gasLimit)
-        .setFunction("swapExactTokensForTokens", params);
+        .setGas(config.gasLimit);
+
+      if (from.isHbar) {
+        transaction
+          .setPayableAmount(Hbar.fromTinybars(quote.amountIn.toString()))
+          .setFunction(
+            "swapExactETHForTokens",
+            new ContractFunctionParameters()
+              .addUint256(toUint256(minOutSmallest))
+              .addAddressArray(path)
+              .addAddress(recipient)
+              .addUint256(toUint256(deadline)),
+          );
+      } else {
+        transaction.setFunction(
+          to.isHbar ? "swapExactTokensForETH" : "swapExactTokensForTokens",
+          new ContractFunctionParameters()
+            .addUint256(toUint256(quote.amountIn.toString()))
+            .addUint256(toUint256(minOutSmallest))
+            .addAddressArray(path)
+            .addAddress(recipient)
+            .addUint256(toUint256(deadline)),
+        );
+      }
 
       const payload: SwapCorePayload = {
         transaction,
         extras: {
-          estimatedOutput: quote.expectedOutput,
-          minOutput: minOutSmallest,
+          estimatedOutput: expectedOutput,
+          minOutput: formatUnits(minOutSmallest, to.decimals),
           priceImpact: quote.priceImpact,
-          route: quote.route,
+          route,
         },
       };
       return payload;

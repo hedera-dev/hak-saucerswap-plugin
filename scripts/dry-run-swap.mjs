@@ -35,15 +35,12 @@ const run = async () => {
     ? Number(process.env.SAUCERSWAP_SLIPPAGE)
     : 0.5;
 
-  const routerContractId = process.env.SAUCERSWAP_ROUTER_CONTRACT_ID;
-  const routerV2ContractId = process.env.SAUCERSWAP_ROUTER_V2_CONTRACT_ID;
-  if (!routerContractId && !routerV2ContractId) {
-    throw new Error(
-      "Missing SaucerSwap router contract ID: set SAUCERSWAP_ROUTER_CONTRACT_ID or SAUCERSWAP_ROUTER_V2_CONTRACT_ID.",
-    );
-  }
-
   const network = (process.env.HEDERA_NETWORK ?? "testnet").toLowerCase();
+  // Swaps use the V1 router. Mainnet and testnet defaults apply unless overridden.
+  const routerContractId = process.env.SAUCERSWAP_ROUTER_CONTRACT_ID;
+  if (!routerContractId && network !== "mainnet" && network !== "testnet") {
+    throw new Error("Missing SaucerSwap V1 router contract ID: set SAUCERSWAP_ROUTER_CONTRACT_ID.");
+  }
   const client = resolveNetworkClient(network);
   client.setOperator(accountId, privateKey);
 
@@ -51,8 +48,8 @@ const run = async () => {
     mode: AgentMode.RETURN_BYTES,
     config: {
       saucerswap: {
+        network: network === "mainnet" ? "mainnet" : "testnet",
         routerContractId,
-        routerV2ContractId,
         wrappedHbarTokenId: process.env.SAUCERSWAP_WRAPPED_HBAR_TOKEN_ID,
       },
     },
