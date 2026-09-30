@@ -1,6 +1,6 @@
 {
   "name": "hak-saucerswap-plugin",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Hedera Agent Kit plugin for SaucerSwap DEX",
   "type": "module",
   "license": "MIT",

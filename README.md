@@ -9,8 +9,8 @@ insights on Hedera.
 SaucerSwap is Hedera's leading DEX with deep liquidity and active DeFi opportunities. This plugin
 lets AI agents:
 
-- Execute swaps with slippage protection
-- Fetch swap quotes and price impact estimates
+- Execute swaps with slippage protection, with HBAR or HTS tokens on either side
+- Fetch on-chain swap quotes and price impact from the SaucerSwap V1 router (via the mirror node)
 - Query pool reserves and token metadata
 - Add/remove liquidity via router transactions
 - Discover farming opportunities
@@ -61,6 +61,14 @@ The SaucerSwap API requires an `x-api-key` header. Get a key from
 [saucerswap.finance](https://www.saucerswap.finance) and supply it via either
 `SAUCERSWAP_API_KEY` in the environment or `config.saucerswap.apiKey`. See
 [`.env.example`](./.env.example) for a copy-paste template of all supported environment variables.
+
+## Swapping HTS tokens
+
+Quotes and swaps go through the SaucerSwap V1 router. Swapping **from HBAR** works out of the box.
+Swapping **from an HTS token** requires the operator to grant the router a token allowance first
+(for example with the Hedera Agent Kit `approve_token_allowance_tool`); the swap tool checks the
+allowance and tells the agent exactly what to approve when it is missing. See
+[`docs/TOOLS.md`](./docs/TOOLS.md#saucerswap_swap_tokens).
 
 ## Network Defaults
 

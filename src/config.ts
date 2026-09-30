@@ -83,6 +83,7 @@ export const resolveSaucerSwapConfig = (context?: unknown): SaucerSwapConfig => 
     retries: ctxConfig.retries ?? toNumber(process.env.SAUCERSWAP_RETRIES, DEFAULT_CONFIG.retries),
     apiKey: ctxConfig.apiKey ?? process.env.SAUCERSWAP_API_KEY,
     network,
+    mirrorNodeUrl: ctxConfig.mirrorNodeUrl ?? process.env.SAUCERSWAP_MIRROR_NODE_URL,
     routerContractId:
       ctxConfig.routerContractId ??
       process.env.SAUCERSWAP_ROUTER_CONTRACT_ID ??

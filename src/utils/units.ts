@@ -1,8 +1,8 @@
 import Long from "long";
 
-/** Convert a base-unit string or number to a Long for ContractFunctionParameters.addUint256. */
+/** Convert a base-unit string or number to an unsigned Long for ContractFunctionParameters.addUint256. */
 export const toUint256 = (value: string | number): Long =>
-  typeof value === "string" ? Long.fromString(value) : Long.fromNumber(value);
+  typeof value === "string" ? Long.fromString(value, true) : Long.fromNumber(value, true);
 
 export const parseUnits = (amount: string, decimals: number): string => {
   if (!amount || typeof amount !== "string") {
@@ -35,6 +35,9 @@ export const formatUnits = (amount: string, decimals: number): string => {
   const trimmed = amount.trim();
   if (!/^\d+$/.test(trimmed)) {
     throw new Error(`Invalid integer amount: ${amount}`);
+  }
+  if (decimals === 0) {
+    return trimmed.replace(/^0+(?=\d)/, "");
   }
   const padded = trimmed.padStart(decimals + 1, "0");
   const whole = padded.slice(0, -decimals);

@@ -2,7 +2,6 @@ import axios, { type AxiosError, type AxiosInstance } from "axios";
 import type {
   ApiFarm,
   ApiLiquidityPool,
-  ApiSwapQuote,
   ApiToken,
   PoolVersion,
   SaucerSwapClientOptions,
@@ -96,21 +95,6 @@ export class SaucerSwapClient {
       return direct || inverse;
     });
     return match ?? null;
-  }
-
-  async getSwapQuote(params: {
-    fromToken: string;
-    toToken: string;
-    amount: string;
-  }): Promise<ApiSwapQuote> {
-    const { fromToken, toToken, amount } = params;
-    return this.request<ApiSwapQuote>(SAUCER_ENDPOINTS.swapQuote, {
-      tokenIn: fromToken,
-      tokenOut: toToken,
-      amount,
-      fromToken,
-      toToken,
-    });
   }
 
   async getFarms(): Promise<ApiFarm[]> {
