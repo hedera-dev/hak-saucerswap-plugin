@@ -244,18 +244,23 @@ On failure:
 
 **Type**: Transaction
 
-**Description**: Add liquidity to a SaucerSwap pool, computing minimum amounts from the requested
-slippage tolerance.
+**Description**: Add liquidity to an existing SaucerSwap V1 pool through the V1 router, computing
+minimum amounts from the requested slippage tolerance. Either side may be native HBAR.
+
+| Pair       | Router function   | Payable amount     |
+| ---------- | ----------------- | ------------------ |
+| HTS + HTS  | `addLiquidity`    | none               |
+| HBAR + HTS | `addLiquidityETH` | the HBAR amount    |
 
 **Parameters**:
 
-| Name                | Type     | Required | Default | Description                                              |
-| ------------------- | -------- | -------- | ------- | -------------------------------------------------------- |
-| `tokenA`            | `string` | Yes      | —       | First token (ID, alias, or symbol).                      |
-| `tokenB`            | `string` | Yes      | —       | Second token (ID, alias, or symbol).                     |
-| `amountA`           | `string` | Yes      | —       | Decimal-format amount of `tokenA` to deposit.            |
-| `amountB`           | `string` | Yes      | —       | Decimal-format amount of `tokenB` to deposit.            |
-| `slippageTolerance` | `number` | No       | `0.5`   | Maximum slippage tolerance, in percent.                  |
+| Name                | Type     | Required | Default | Description                                                     |
+| ------------------- | -------- | -------- | ------- | --------------------------------------------------------------- |
+| `tokenA`            | `string` | Yes      | n/a     | `"HBAR"` for native HBAR, or a token ID, alias, or symbol.      |
+| `tokenB`            | `string` | Yes      | n/a     | `"HBAR"` for native HBAR, or a token ID, alias, or symbol.      |
+| `amountA`           | `string` | Yes      | n/a     | Decimal-format amount of `tokenA` to deposit.                   |
+| `amountB`           | `string` | Yes      | n/a     | Decimal-format amount of `tokenB` to deposit.                   |
+| `slippageTolerance` | `number` | No       | `0.5`   | Maximum slippage tolerance, in percent.                         |
 
 **Returns** (`AgentMode.AUTONOMOUS`):
 
@@ -276,18 +281,30 @@ slippage tolerance.
 { bytes: Uint8Array, amountADesired, amountBDesired, amountAMin, amountBMin }
 ```
 
-On configuration failure: `{ success: false, error: string }`.
+On configuration or pre-flight failure (missing operator, missing V1 router, missing allowance):
+`{ success: false, error: string }`.
 
 **Example prompts**:
 
 - "Add liquidity: 100 HBAR and 50 USDC to the SaucerSwap pool."
 - "Deposit 1000 SAUCE and 25 HBAR into the SAUCE/HBAR pool with 1% slippage."
 
+**Router allowance**:
+
+The router pulls each HTS token it deposits with `transferFrom`, so the operator must first grant
+the V1 router a token allowance of at least the deposit amount for every HTS side. The HBAR side
+needs no allowance. The tool checks the allowances on the mirror node and returns an error listing
+each missing one (token, spender and amount) instead of submitting a transaction that would revert.
+Grant them with the Hedera Agent Kit `approve_token_allowance_tool`, as described for
+[`saucerswap_swap_tokens`](#saucerswap_swap_tokens).
+
 **Notes & errors**:
 
-- Requires a configured operator account on the Hedera client.
-- The router contract ID corresponding to `defaultPoolVersion` must be configured.
-- The token pair must already exist as a pool — this tool does not create new pools.
+- Requires a configured operator account on the Hedera client. LP tokens are sent to the operator,
+  which must be associated with the LP token (or have a free auto-association slot).
+- Always uses the V1 router (`routerContractId`), whatever `defaultPoolVersion` says. The V2
+  router is a concentrated-liquidity router with a different interface.
+- The token pair must already exist as a V1 pool. This tool does not create new pools.
 
 ---
 
@@ -295,18 +312,23 @@ On configuration failure: `{ success: false, error: string }`.
 
 **Type**: Transaction
 
-**Description**: Burn LP tokens to redeem the underlying pair. The minimum receive amounts are
-provided explicitly by the caller.
+**Description**: Burn V1 LP tokens through the V1 router to redeem the underlying pair. The
+minimum receive amounts are provided explicitly by the caller. Either side may be native HBAR.
+
+| Pair       | Router function      |
+| ---------- | -------------------- |
+| HTS + HTS  | `removeLiquidity`    |
+| HBAR + HTS | `removeLiquidityETH` |
 
 **Parameters**:
 
-| Name            | Type     | Required | Default | Description                                                              |
-| --------------- | -------- | -------- | ------- | ------------------------------------------------------------------------ |
-| `tokenA`        | `string` | Yes      | —       | First token of the pool (ID, alias, or symbol).                          |
-| `tokenB`        | `string` | Yes      | —       | Second token of the pool (ID, alias, or symbol).                         |
-| `lpTokenAmount` | `string` | Yes      | —       | Decimal-format amount of LP tokens to burn.                              |
-| `minAmountA`    | `string` | Yes      | —       | Minimum amount of `tokenA` accepted (decimal-format, slippage protection). |
-| `minAmountB`    | `string` | Yes      | —       | Minimum amount of `tokenB` accepted (decimal-format, slippage protection). |
+| Name            | Type     | Required | Default | Description                                                                |
+| --------------- | -------- | -------- | ------- | -------------------------------------------------------------------------- |
+| `tokenA`        | `string` | Yes      | n/a     | First token of the pool: `"HBAR"`, or a token ID, alias, or symbol.        |
+| `tokenB`        | `string` | Yes      | n/a     | Second token of the pool: `"HBAR"`, or a token ID, alias, or symbol.       |
+| `lpTokenAmount` | `string` | Yes      | n/a     | Decimal-format amount of LP tokens to burn.                                |
+| `minAmountA`    | `string` | Yes      | n/a     | Minimum amount of `tokenA` accepted (decimal-format, slippage protection). |
+| `minAmountB`    | `string` | Yes      | n/a     | Minimum amount of `tokenB` accepted (decimal-format, slippage protection). |
 
 **Returns** (`AgentMode.AUTONOMOUS`):
 
@@ -326,18 +348,27 @@ provided explicitly by the caller.
 { bytes: Uint8Array, lpAmount, minAmountA, minAmountB }
 ```
 
-On failure (no pool found, missing operator, etc.): `{ success: false, error: string }`.
+On failure (no V1 pool found, missing operator, missing LP allowance, etc.):
+`{ success: false, error: string }`.
 
 **Example prompts**:
 
 - "Remove 10 LP tokens from the HBAR/USDC pool, accepting at least 4 HBAR and 1 USDC back."
 - "Burn 500 SAUCE-HBAR LP tokens with minimum receive of 250 SAUCE and 5 HBAR."
 
+**Router allowance**:
+
+The LP token is an HTS token (for example `0.0.2656383` for HBAR/SAUCE on testnet) that the router
+pulls from the operator, so the operator must first grant the V1 router an allowance of at least
+`lpTokenAmount` for it. The tool checks it on the mirror node and returns approval instructions
+when it is missing.
+
 **Notes**:
 
-- This tool resolves the LP token decimals from the pool metadata — the input `lpTokenAmount` is
-  in display units, not tiny units.
-- The pool for the given pair must exist on the configured `defaultPoolVersion`.
+- The pool and its LP token are looked up in the SaucerSwap API's V1 pool list, whatever
+  `defaultPoolVersion` says. `lpTokenAmount` is in display units, not tiny units.
+- Always uses the V1 router (`routerContractId`).
+- The operator must be associated with any HTS token it receives back.
 
 ---
 

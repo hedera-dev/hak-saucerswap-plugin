@@ -8,7 +8,10 @@ import { formatUnits, parseUnits } from "./units";
 
 export const HBAR_DECIMALS = 8;
 
-export type TokenLookup = Pick<SaucerSwapClient, "resolveTokenId" | "getTokenByIdOrSymbol">;
+export type TokenLookup = Pick<
+  SaucerSwapClient,
+  "resolveTokenId" | "getTokenByIdOrSymbol" | "getPoolByTokens"
+>;
 export type MirrorLookup = Pick<
   MirrorNodeClient,
   "contractCall" | "getTokenDecimals" | "getTokenAllowance"
@@ -67,7 +70,7 @@ export const resolveApiClients = (
   };
 };
 
-const resolveToken = async (
+export const resolveToken = async (
   input: string,
   config: SaucerSwapConfig,
   api: TokenLookup,
@@ -97,6 +100,19 @@ const resolveToken = async (
 };
 
 /**
+ * Quotes, swaps and liquidity all go through the V1 router. The V2 router is a concentrated
+ * liquidity router with a different ABI, so it is never used as a fallback.
+ */
+export const requireV1Router = (config: SaucerSwapConfig): string => {
+  if (!config.routerContractId) {
+    throw new Error(
+      "Missing SaucerSwap V1 router contract ID (routerContractId). Swaps, quotes and liquidity use the V1 router; set `network` or SAUCERSWAP_ROUTER_CONTRACT_ID.",
+    );
+  }
+  return config.routerContractId;
+};
+
+/**
  * Resolve both tokens and quote the swap on-chain through the SaucerSwap V1 router.
  * Shared by the quote tool and the swap tool so both report the same numbers.
  */
@@ -109,12 +125,7 @@ export const prepareSwapQuote = async (params: {
   mirror: MirrorLookup;
 }): Promise<PreparedSwapQuote> => {
   const { config, api, mirror } = params;
-  const routerContractId = config.routerContractId;
-  if (!routerContractId) {
-    throw new Error(
-      "Missing SaucerSwap V1 router contract ID (routerContractId). Swaps and quotes use the V1 router; set `network` or SAUCERSWAP_ROUTER_CONTRACT_ID.",
-    );
-  }
+  const routerContractId = requireV1Router(config);
 
   const from = await resolveToken(params.fromToken, config, api, mirror);
   const to = await resolveToken(params.toToken, config, api, mirror);
