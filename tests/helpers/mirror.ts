@@ -83,7 +83,7 @@ export const createFakeMirror = (
           throw new Error(`unexpected selector ${selector}`);
       }
     },
-    async getTokenAllowance(): Promise<bigint> {
+    async getTokenAllowance(_owner: string, _spender: string, _tokenId: string): Promise<bigint> {
       return options.allowance ?? 0n;
     },
     async getTokenDecimals(tokenId: string): Promise<number> {

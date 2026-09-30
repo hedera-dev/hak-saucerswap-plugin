@@ -8,24 +8,32 @@ import {
   type Client,
   ContractExecuteTransaction,
   ContractFunctionParameters,
+  Hbar,
   type Transaction,
 } from "@hiero-ledger/sdk";
 import { z } from "zod";
-import { createSaucerSwapClient } from "../api/client";
 import { resolveSaucerSwapConfig } from "../config";
+import type { SaucerSwapConfig } from "../types";
+import { findMissingAllowances } from "../utils/allowance";
 import { applySlippageToAmount } from "../utils/amm";
+import {
+  type MirrorLookup,
+  type ResolvedSwapToken,
+  type TokenLookup,
+  requireV1Router,
+  resolveApiClients,
+  resolveToken,
+} from "../utils/swap-quote";
 import {
   accountIdToSolidityAddress,
   contractIdFromString,
-  normalizeTokenAlias,
-  requireTokenId,
   tokenIdToSolidityAddress,
 } from "../utils/tokens";
 import { parseUnits, toUint256 } from "../utils/units";
 
 const addLiquidityInputSchema = z.object({
-  tokenA: z.string().describe("First token ID"),
-  tokenB: z.string().describe("Second token ID"),
+  tokenA: z.string().describe("First token: 'HBAR' for native HBAR, or a token ID/symbol"),
+  tokenB: z.string().describe("Second token: 'HBAR' for native HBAR, or a token ID/symbol"),
   amountA: z.string().describe("Amount of tokenA to add"),
   amountB: z.string().describe("Amount of tokenB to add"),
   slippageTolerance: z
@@ -36,8 +44,8 @@ const addLiquidityInputSchema = z.object({
 });
 
 const removeLiquidityInputSchema = z.object({
-  tokenA: z.string().describe("First token ID"),
-  tokenB: z.string().describe("Second token ID"),
+  tokenA: z.string().describe("First token: 'HBAR' for native HBAR, or a token ID/symbol"),
+  tokenB: z.string().describe("Second token: 'HBAR' for native HBAR, or a token ID/symbol"),
   lpTokenAmount: z.string().describe("Amount of LP tokens to burn"),
   minAmountA: z.string().describe("Minimum amount of tokenA to receive"),
   minAmountB: z.string().describe("Minimum amount of tokenB to receive"),
@@ -79,21 +87,26 @@ const resolveDeadline = (defaultMinutes: number): number => {
   return Math.floor(Date.now() / 1000) + defaultMinutes * 60;
 };
 
-const resolveRouterContract = (config: ReturnType<typeof resolveSaucerSwapConfig>): string => {
-  const routerContractId =
-    config.defaultPoolVersion === "v2"
-      ? (config.routerV2ContractId ?? config.routerContractId)
-      : (config.routerContractId ?? config.routerV2ContractId);
-  if (!routerContractId) {
-    throw new Error("Missing SaucerSwap router contract ID configuration.");
+const resolveLiquidityTokens = async (
+  tokenA: string,
+  tokenB: string,
+  config: SaucerSwapConfig,
+  api: TokenLookup,
+  mirror: MirrorLookup,
+): Promise<[ResolvedSwapToken, ResolvedSwapToken]> => {
+  const a = await resolveToken(tokenA, config, api, mirror);
+  const b = await resolveToken(tokenB, config, api, mirror);
+  if (a.tokenId === b.tokenId) {
+    throw new Error("tokenA and tokenB resolve to the same token.");
   }
-  return routerContractId;
+  return [a, b];
 };
 
 export class AddLiquidityTool extends BaseTool<AddLiquidityInput, AddLiquidityInput> {
   method = "saucerswap_add_liquidity";
   name = "SaucerSwap Add Liquidity";
-  description = "Add liquidity to a SaucerSwap pool.";
+  description =
+    "Add liquidity to an existing SaucerSwap V1 pool. Supports HBAR as one side. HTS tokens need a token allowance for the SaucerSwap V1 router first.";
   parameters = addLiquidityInputSchema;
 
   async normalizeParams(
@@ -117,48 +130,77 @@ export class AddLiquidityTool extends BaseTool<AddLiquidityInput, AddLiquidityIn
     }
 
     try {
-      const api =
-        (context as { saucerswapClient?: ReturnType<typeof createSaucerSwapClient> })
-          .saucerswapClient ?? createSaucerSwapClient(config);
-
-      const tokenAInput = normalizeTokenAlias(args.tokenA, config);
-      const tokenBInput = normalizeTokenAlias(args.tokenB, config);
-      const tokenAId = await api.resolveTokenId(tokenAInput);
-      const tokenBId = await api.resolveTokenId(tokenBInput);
-
-      const tokenA = await api.getTokenByIdOrSymbol(tokenAId);
-      const tokenB = await api.getTokenByIdOrSymbol(tokenBId);
-
-      if (!tokenA || !tokenB) {
-        return {
-          success: false,
-          error: "Unable to resolve token metadata from SaucerSwap API.",
-        };
-      }
+      const { api, mirror } = resolveApiClients(context, config, client);
+      const [tokenA, tokenB] = await resolveLiquidityTokens(
+        args.tokenA,
+        args.tokenB,
+        config,
+        api,
+        mirror,
+      );
 
       const amountADesired = parseUnits(args.amountA, tokenA.decimals);
       const amountBDesired = parseUnits(args.amountB, tokenB.decimals);
       const amountAMin = applySlippageToAmount(amountADesired, slippageTolerance);
       const amountBMin = applySlippageToAmount(amountBDesired, slippageTolerance);
 
-      const routerContractId = resolveRouterContract(config);
+      const routerContractId = requireV1Router(config);
+      const allowanceError = await findMissingAllowances(
+        mirror,
+        operatorAccountId,
+        routerContractId,
+        [
+          { token: tokenA, amount: amountADesired },
+          { token: tokenB, amount: amountBDesired },
+        ]
+          .filter(({ token }) => !token.isHbar)
+          .map(({ token, amount }) => ({
+            tokenId: token.tokenId,
+            amount: BigInt(amount),
+            decimals: token.decimals,
+          })),
+      );
+      if (allowanceError) {
+        return { success: false, error: allowanceError };
+      }
+
       const deadline = resolveDeadline(config.deadlineMinutes);
       const toAddress = accountIdToSolidityAddress(operatorAccountId);
-
-      const params = new ContractFunctionParameters()
-        .addAddress(tokenIdToSolidityAddress(requireTokenId(tokenAId)))
-        .addAddress(tokenIdToSolidityAddress(requireTokenId(tokenBId)))
-        .addUint256(toUint256(amountADesired))
-        .addUint256(toUint256(amountBDesired))
-        .addUint256(toUint256(amountAMin))
-        .addUint256(toUint256(amountBMin))
-        .addAddress(toAddress)
-        .addUint256(toUint256(deadline));
-
       const transaction = new ContractExecuteTransaction()
         .setContractId(contractIdFromString(routerContractId))
-        .setGas(config.gasLimit)
-        .setFunction("addLiquidity", params);
+        .setGas(config.gasLimit);
+
+      if (tokenA.isHbar || tokenB.isHbar) {
+        // addLiquidityETH(token, amountTokenDesired, amountTokenMin, amountETHMin, to, deadline)
+        const [hts, htsDesired, htsMin, hbarDesired, hbarMin] = tokenA.isHbar
+          ? [tokenB, amountBDesired, amountBMin, amountADesired, amountAMin]
+          : [tokenA, amountADesired, amountAMin, amountBDesired, amountBMin];
+        transaction
+          .setPayableAmount(Hbar.fromTinybars(hbarDesired))
+          .setFunction(
+            "addLiquidityETH",
+            new ContractFunctionParameters()
+              .addAddress(tokenIdToSolidityAddress(hts.tokenId))
+              .addUint256(toUint256(htsDesired))
+              .addUint256(toUint256(htsMin))
+              .addUint256(toUint256(hbarMin))
+              .addAddress(toAddress)
+              .addUint256(toUint256(deadline)),
+          );
+      } else {
+        transaction.setFunction(
+          "addLiquidity",
+          new ContractFunctionParameters()
+            .addAddress(tokenIdToSolidityAddress(tokenA.tokenId))
+            .addAddress(tokenIdToSolidityAddress(tokenB.tokenId))
+            .addUint256(toUint256(amountADesired))
+            .addUint256(toUint256(amountBDesired))
+            .addUint256(toUint256(amountAMin))
+            .addUint256(toUint256(amountBMin))
+            .addAddress(toAddress)
+            .addUint256(toUint256(deadline)),
+        );
+      }
 
       const payload: LiquidityCorePayload<AddLiquidityExtras> = {
         transaction,
@@ -195,7 +237,8 @@ export class AddLiquidityTool extends BaseTool<AddLiquidityInput, AddLiquidityIn
 export class RemoveLiquidityTool extends BaseTool<RemoveLiquidityInput, RemoveLiquidityInput> {
   method = "saucerswap_remove_liquidity";
   name = "SaucerSwap Remove Liquidity";
-  description = "Remove liquidity from a SaucerSwap pool.";
+  description =
+    "Remove liquidity from a SaucerSwap V1 pool. Supports HBAR as one side. The LP token needs a token allowance for the SaucerSwap V1 router first.";
   parameters = removeLiquidityInputSchema;
 
   async normalizeParams(
@@ -218,29 +261,21 @@ export class RemoveLiquidityTool extends BaseTool<RemoveLiquidityInput, RemoveLi
     }
 
     try {
-      const api =
-        (context as { saucerswapClient?: ReturnType<typeof createSaucerSwapClient> })
-          .saucerswapClient ?? createSaucerSwapClient(config);
+      const { api, mirror } = resolveApiClients(context, config, client);
+      const [tokenA, tokenB] = await resolveLiquidityTokens(
+        args.tokenA,
+        args.tokenB,
+        config,
+        api,
+        mirror,
+      );
 
-      const tokenAInput = normalizeTokenAlias(args.tokenA, config);
-      const tokenBInput = normalizeTokenAlias(args.tokenB, config);
-      const tokenAId = await api.resolveTokenId(tokenAInput);
-      const tokenBId = await api.resolveTokenId(tokenBInput);
-
-      const pool = await api.getPoolByTokens(tokenAId, tokenBId, config.defaultPoolVersion);
+      // Liquidity lives in V1 pools; the LP token is an HTS token the router pulls on removal.
+      const pool = await api.getPoolByTokens(tokenA.tokenId, tokenB.tokenId, "v1");
       if (!pool) {
         return {
           success: false,
-          error: "Unable to locate pool for the provided token pair.",
-        };
-      }
-
-      const tokenA = await api.getTokenByIdOrSymbol(tokenAId);
-      const tokenB = await api.getTokenByIdOrSymbol(tokenBId);
-      if (!tokenA || !tokenB) {
-        return {
-          success: false,
-          error: "Unable to resolve token metadata from SaucerSwap API.",
+          error: "Unable to locate a SaucerSwap V1 pool for the provided token pair.",
         };
       }
 
@@ -248,23 +283,51 @@ export class RemoveLiquidityTool extends BaseTool<RemoveLiquidityInput, RemoveLi
       const minAmountA = parseUnits(args.minAmountA, tokenA.decimals);
       const minAmountB = parseUnits(args.minAmountB, tokenB.decimals);
 
-      const routerContractId = resolveRouterContract(config);
+      const routerContractId = requireV1Router(config);
+      const allowanceError = await findMissingAllowances(
+        mirror,
+        operatorAccountId,
+        routerContractId,
+        [{ tokenId: pool.lpToken.id, amount: BigInt(lpAmount), decimals: pool.lpToken.decimals }],
+      );
+      if (allowanceError) {
+        return { success: false, error: allowanceError };
+      }
+
       const deadline = resolveDeadline(config.deadlineMinutes);
       const toAddress = accountIdToSolidityAddress(operatorAccountId);
-
-      const params = new ContractFunctionParameters()
-        .addAddress(tokenIdToSolidityAddress(requireTokenId(tokenAId)))
-        .addAddress(tokenIdToSolidityAddress(requireTokenId(tokenBId)))
-        .addUint256(toUint256(lpAmount))
-        .addUint256(toUint256(minAmountA))
-        .addUint256(toUint256(minAmountB))
-        .addAddress(toAddress)
-        .addUint256(toUint256(deadline));
-
       const transaction = new ContractExecuteTransaction()
         .setContractId(contractIdFromString(routerContractId))
-        .setGas(config.gasLimit)
-        .setFunction("removeLiquidity", params);
+        .setGas(config.gasLimit);
+
+      if (tokenA.isHbar || tokenB.isHbar) {
+        // removeLiquidityETH(token, liquidity, amountTokenMin, amountETHMin, to, deadline)
+        const [hts, htsMin, hbarMin] = tokenA.isHbar
+          ? [tokenB, minAmountB, minAmountA]
+          : [tokenA, minAmountA, minAmountB];
+        transaction.setFunction(
+          "removeLiquidityETH",
+          new ContractFunctionParameters()
+            .addAddress(tokenIdToSolidityAddress(hts.tokenId))
+            .addUint256(toUint256(lpAmount))
+            .addUint256(toUint256(htsMin))
+            .addUint256(toUint256(hbarMin))
+            .addAddress(toAddress)
+            .addUint256(toUint256(deadline)),
+        );
+      } else {
+        transaction.setFunction(
+          "removeLiquidity",
+          new ContractFunctionParameters()
+            .addAddress(tokenIdToSolidityAddress(tokenA.tokenId))
+            .addAddress(tokenIdToSolidityAddress(tokenB.tokenId))
+            .addUint256(toUint256(lpAmount))
+            .addUint256(toUint256(minAmountA))
+            .addUint256(toUint256(minAmountB))
+            .addAddress(toAddress)
+            .addUint256(toUint256(deadline)),
+        );
+      }
 
       const payload: LiquidityCorePayload<RemoveLiquidityExtras> = {
         transaction,

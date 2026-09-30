@@ -13,6 +13,7 @@ import {
 } from "@hiero-ledger/sdk";
 import { z } from "zod";
 import { resolveSaucerSwapConfig } from "../config";
+import { findMissingAllowances } from "../utils/allowance";
 import { applySlippageToAmount } from "../utils/amm";
 import { prepareSwapQuote, resolveApiClients } from "../utils/swap-quote";
 import {
@@ -72,15 +73,6 @@ const resolveDeadline = (deadlineInput: number | undefined, defaultMinutes: numb
   return now + Math.round(deadlineInput) * 60;
 };
 
-const allowanceError = (
-  tokenId: string,
-  owner: string,
-  router: string,
-  required: string,
-  current: string,
-) =>
-  `The SaucerSwap router ${router} needs a token allowance of at least ${required} ${tokenId} from ${owner} to pull the swap input (current allowance: ${current}). Approve it first, for example with the Hedera Agent Kit approve_token_allowance_tool using spender ${router}, then retry the swap.`;
-
 export class SwapTool extends BaseTool<SwapInput, SwapInput> {
   method = "saucerswap_swap_tokens";
   name = "SaucerSwap Swap Tokens";
@@ -115,24 +107,13 @@ export class SwapTool extends BaseTool<SwapInput, SwapInput> {
         mirror,
       });
 
-      // The router pulls HTS input tokens with transferFrom, so the operator must have granted it
-      // an allowance. Fail early with instructions instead of submitting a transaction that
-      // reverts. If the mirror node cannot answer, let the network decide.
+      // Fail early with instructions instead of submitting a transaction that reverts.
       if (!from.isHbar) {
-        const allowance = await mirror
-          .getTokenAllowance(operatorAccountId, routerContractId, from.tokenId)
-          .catch(() => null);
-        if (allowance !== null && allowance < quote.amountIn) {
-          return {
-            success: false,
-            error: allowanceError(
-              from.tokenId,
-              operatorAccountId,
-              routerContractId,
-              args.amount,
-              formatUnits(allowance.toString(), from.decimals),
-            ),
-          };
+        const error = await findMissingAllowances(mirror, operatorAccountId, routerContractId, [
+          { tokenId: from.tokenId, amount: quote.amountIn, decimals: from.decimals },
+        ]);
+        if (error) {
+          return { success: false, error };
         }
       }
 

@@ -152,7 +152,7 @@ describe("SwapTool.coreAction", () => {
     expect(result).toMatchObject({
       success: false,
       error: expect.stringMatching(
-        /allowance of at least 10 0\.0\.1183558.*current allowance: 1\b/,
+        /allowance from 0\.0\.1001 of at least 10 0\.0\.1183558 \(current allowance: 1\)/,
       ),
     });
     expect((result as { error: string }).error).toContain("approve_token_allowance_tool");

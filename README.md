@@ -12,7 +12,7 @@ lets AI agents:
 - Execute swaps with slippage protection, with HBAR or HTS tokens on either side
 - Fetch on-chain swap quotes and price impact from the SaucerSwap V1 router (via the mirror node)
 - Query pool reserves and token metadata
-- Add/remove liquidity via router transactions
+- Add/remove liquidity on V1 pools, with HBAR or HTS tokens
 - Discover farming opportunities
 
 ## Documentation
