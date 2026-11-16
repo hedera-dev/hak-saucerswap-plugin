@@ -1,5 +1,5 @@
 import type { ContractExecuteTransaction } from "@hiero-ledger/sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SwapTool } from "../src/tools/swap";
 import { createFakeMirror } from "./helpers/mirror";
 
@@ -201,5 +201,49 @@ describe("SwapTool.shouldSecondaryAction", () => {
 
   it("returns false for null", async () => {
     expect(await tool.shouldSecondaryAction(null, {} as never)).toBe(false);
+  });
+});
+
+describe("SwapTool explicit deadline integration", () => {
+  it("serializes a near-future explicit timestamp without treating it as minutes", async () => {
+    const now = 1_800_000_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now * 1000);
+    try {
+      const result = await run({
+        fromToken: "HBAR",
+        toToken: SAUCE,
+        amount: "1",
+        deadlineTimestamp: now + 30,
+      });
+      expect(result).toHaveProperty("transaction");
+      if (!("transaction" in result)) throw new Error("Expected a transaction");
+      const tx = result.transaction as ContractExecuteTransaction;
+      const hex = Buffer.from(tx.functionParameters ?? []).toString("hex");
+      // swapExactETHForTokens(uint256,address[],address,uint256)
+      expect(BigInt(`0x${hex.slice(8 + 64 * 3, 8 + 64 * 4)}`)).toBe(BigInt(now + 30));
+    } finally {
+      clock.mockRestore();
+    }
+  });
+  it("does not build a transaction for an expired explicit timestamp", async () => {
+    const result = await run({
+      fromToken: "HBAR",
+      toToken: SAUCE,
+      amount: "1",
+      deadlineTimestamp: 1,
+    });
+    expect(result).toMatchObject({ success: false, error: expect.stringContaining("future") });
+    expect(result).not.toHaveProperty("transaction");
+  });
+  it("does not build a transaction for conflicting deadline fields", async () => {
+    const result = await run({
+      fromToken: "HBAR",
+      toToken: SAUCE,
+      amount: "1",
+      deadline: 20,
+      deadlineMinutes: 20,
+    });
+    expect(result).toMatchObject({ success: false, error: expect.stringContaining("only one") });
+    expect(result).not.toHaveProperty("transaction");
   });
 });

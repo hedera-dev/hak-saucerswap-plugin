@@ -3,7 +3,7 @@ import { TokenId } from "@hiero-ledger/sdk";
 const word = (value: bigint) => value.toString(16).padStart(64, "0");
 const addressWord = (address: string) => address.replace(/^0x/, "").padStart(64, "0");
 
-export const evm = (tokenId: string) => `0x${TokenId.fromString(tokenId).toSolidityAddress()}`;
+export const evm = (tokenId: string) => `0x${TokenId.fromString(tokenId).toEvmAddress()}`;
 
 export const FACTORY = `0x${"f".repeat(40)}`;
 

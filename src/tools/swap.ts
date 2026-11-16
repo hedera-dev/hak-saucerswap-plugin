@@ -15,6 +15,7 @@ import { z } from "zod";
 import { resolveSaucerSwapConfig } from "../config";
 import { findMissingAllowances } from "../utils/allowance";
 import { applySlippageToAmount } from "../utils/amm";
+import { resolveDeadline } from "../utils/deadline";
 import { prepareSwapQuote, resolveApiClients } from "../utils/swap-quote";
 import {
   accountIdToSolidityAddress,
@@ -39,7 +40,19 @@ const swapInputSchema = z.object({
   deadline: z
     .number()
     .optional()
-    .describe("Transaction deadline in minutes from now or a unix timestamp"),
+    .describe("Deprecated ambiguous deadline; prefer deadlineMinutes or deadlineTimestamp."),
+  deadlineMinutes: z
+    .number()
+    .finite()
+    .positive()
+    .optional()
+    .describe("Deadline in minutes from now."),
+  deadlineTimestamp: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Absolute future Unix timestamp in seconds."),
 });
 
 type SwapInput = z.infer<typeof swapInputSchema>;
@@ -61,17 +74,6 @@ const isSwapCorePayload = (value: unknown): value is SwapCorePayload =>
 
 const swapPostProcess = (response: RawTransactionResponse) =>
   `SaucerSwap swap submitted. Status: ${response.status}. Transaction ID: ${response.transactionId}`;
-
-const resolveDeadline = (deadlineInput: number | undefined, defaultMinutes: number): number => {
-  const now = Math.floor(Date.now() / 1000);
-  if (!deadlineInput) {
-    return now + defaultMinutes * 60;
-  }
-  if (deadlineInput > now + 60) {
-    return Math.floor(deadlineInput);
-  }
-  return now + Math.round(deadlineInput) * 60;
-};
 
 export class SwapTool extends BaseTool<SwapInput, SwapInput> {
   method = "saucerswap_swap_tokens";
@@ -118,7 +120,7 @@ export class SwapTool extends BaseTool<SwapInput, SwapInput> {
       }
 
       const minOutSmallest = applySlippageToAmount(quote.amountOut.toString(), slippageTolerance);
-      const deadline = resolveDeadline(args.deadline, config.deadlineMinutes);
+      const deadline = resolveDeadline(args, config.deadlineMinutes);
       const recipient = accountIdToSolidityAddress(operatorAccountId);
       const path = quote.path.map(tokenIdToSolidityAddress);
 

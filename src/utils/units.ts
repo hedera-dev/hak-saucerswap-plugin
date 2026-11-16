@@ -1,8 +1,30 @@
-import Long from "long";
+import type { ContractFunctionParameters } from "@hiero-ledger/sdk";
 
-/** Convert a base-unit string or number to an unsigned Long for ContractFunctionParameters.addUint256. */
-export const toUint256 = (value: string | number): Long =>
-  typeof value === "string" ? Long.fromString(value, true) : Long.fromNumber(value, true);
+type SdkUint256 = Parameters<ContractFunctionParameters["addUint256"]>[0];
+
+const MAX_UINT256 = (1n << 256n) - 1n;
+
+/** Convert an exact unsigned ABI integer without narrowing it through a 64-bit Long. */
+export const toUint256 = (value: string | number): SdkUint256 => {
+  if (typeof value === "number" && (!Number.isSafeInteger(value) || value < 0)) {
+    throw new Error(
+      "Amount must be a non-negative safe integer; use a decimal string for large values.",
+    );
+  }
+  const text = String(value);
+  if (!/^\d+$/.test(text)) {
+    throw new Error("Amount must be a non-negative integer in decimal format.");
+  }
+  const integer = BigInt(text);
+  if (integer > MAX_UINT256) {
+    throw new Error("Amount exceeds the unsigned 256-bit range.");
+  }
+  // SDK 2.84.0 and 2.91.0 accept decimal strings in convertToBigNumber, but
+  // their declaration omits strings. Keep this compatibility assertion at the
+  // boundary, avoiding BigNumber class identity across copies and ESM/CJS.
+  // Real ABI/transaction roundtrip tests must cover each supported SDK upgrade.
+  return integer.toString() as unknown as SdkUint256;
+};
 
 export const parseUnits = (amount: string, decimals: number): string => {
   if (!amount || typeof amount !== "string") {

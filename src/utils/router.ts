@@ -26,7 +26,7 @@ export interface RouterQuote {
 }
 
 export const contractIdToEvmAddress = (contractId: string): string =>
-  toEvmAddress(contractIdFromString(contractId).toSolidityAddress());
+  toEvmAddress(contractIdFromString(contractId).toEvmAddress());
 
 const tokenEvm = (tokenId: string): string => toEvmAddress(tokenIdToSolidityAddress(tokenId));
 

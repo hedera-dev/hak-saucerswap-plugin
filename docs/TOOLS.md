@@ -410,3 +410,25 @@ All tools return a plain `{ success: false, error: string }` object when:
 
 These error results bypass `secondaryAction` — no transaction is built and nothing is sent to the
 network. Inspect `result.error` to surface the failure reason to the user.
+
+
+### Explicit swap deadlines (prototype)
+
+Prefer `deadlineMinutes` (positive minutes from now, rounded to the nearest second)
+or `deadlineTimestamp` (a future integer Unix timestamp in seconds). Supply only
+one deadline field. An explicit timestamp at or before the current time is
+rejected; timestamps less than 60 seconds in the future are valid.
+
+The existing `deadline` field is deprecated but retains its documented legacy
+interpretation: values more than 60 seconds in the future are timestamps;
+other positive values are rounded minutes; zero uses the configured default.
+That legacy ambiguity is intentionally not silently reinterpreted. In particular,
+an expired timestamp supplied through `deadline` still behaves as minutes.
+Migrate timestamp callers to `deadlineTimestamp` for expiration validation.
+
+Unsigned ABI integers are validated as exact decimal values in the full uint256
+range. JavaScript numbers must be safe integers; use strings for large values.
+The SDK compatibility boundary uses its runtime decimal-string support instead
+of a `Long` or cross-package `BigNumber` instance. SDK upgrades require real
+transaction roundtrip coverage in ESM and CJS because current SDK declarations
+omit that supported runtime string input.
