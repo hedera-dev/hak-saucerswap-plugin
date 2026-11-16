@@ -19,7 +19,10 @@ for (const [name, mod, sdk] of variants) {
       resolveTokenId: async (id) => id,
       getTokenByIdOrSymbol: async (id) => ({ id, decimals: 0 }),
     },
-    saucerswapMirrorClient: { getTokenAllowance: async () => max + 1n },
+    saucerswapMirrorClient: {
+      getTokenAllowance: async () => max + 1n,
+      getAccountEvmAddress: async (id) => sdk.AccountId.fromString(id).toEvmAddress(),
+    },
   };
   const client = { operatorAccountId: { toString: () => "0.0.1001" } };
   const args = { tokenA: "0.0.100", tokenB: "0.0.101", amountB: "1", slippageTolerance: 0 };

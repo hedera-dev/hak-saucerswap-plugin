@@ -58,6 +58,26 @@ export class MirrorNodeClient {
     }
   }
 
+  /** Resolve the canonical EVM address; ECDSA aliases cannot be replaced by long-zero IDs. */
+  async getAccountEvmAddress(accountId: string): Promise<string> {
+    const response = await this.http.get<{
+      account?: string;
+      deleted?: boolean;
+      evm_address?: string;
+    }>(`/api/v1/accounts/${encodeURIComponent(accountId)}`);
+    const data = response.data;
+    if (
+      data.account !== accountId ||
+      data.deleted !== false ||
+      !data.evm_address ||
+      !/^0x[0-9a-fA-F]{40}$/.test(data.evm_address) ||
+      /^0x0{40}$/.test(data.evm_address)
+    ) {
+      throw new Error(`Unable to resolve a canonical EVM address for account ${accountId}.`);
+    }
+    return data.evm_address.slice(2).toLowerCase();
+  }
+
   /** Remaining fungible token allowance granted by `ownerId` to `spenderId`, in smallest units. */
   async getTokenAllowance(ownerId: string, spenderId: string, tokenId: string): Promise<bigint> {
     const response = await this.http.get<TokenAllowancesResponse>(

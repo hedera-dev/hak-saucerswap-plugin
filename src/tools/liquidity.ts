@@ -24,11 +24,7 @@ import {
   resolveApiClients,
   resolveToken,
 } from "../utils/swap-quote";
-import {
-  accountIdToSolidityAddress,
-  contractIdFromString,
-  tokenIdToSolidityAddress,
-} from "../utils/tokens";
+import { contractIdFromString, tokenIdToSolidityAddress } from "../utils/tokens";
 import { parseUnits, toUint256 } from "../utils/units";
 
 const addLiquidityInputSchema = z.object({
@@ -165,7 +161,7 @@ export class AddLiquidityTool extends BaseTool<AddLiquidityInput, AddLiquidityIn
       }
 
       const deadline = resolveDeadline(config.deadlineMinutes);
-      const toAddress = accountIdToSolidityAddress(operatorAccountId);
+      const toAddress = await mirror.getAccountEvmAddress(operatorAccountId);
       const transaction = new ContractExecuteTransaction()
         .setContractId(contractIdFromString(routerContractId))
         .setGas(config.gasLimit);
@@ -295,7 +291,7 @@ export class RemoveLiquidityTool extends BaseTool<RemoveLiquidityInput, RemoveLi
       }
 
       const deadline = resolveDeadline(config.deadlineMinutes);
-      const toAddress = accountIdToSolidityAddress(operatorAccountId);
+      const toAddress = await mirror.getAccountEvmAddress(operatorAccountId);
       const transaction = new ContractExecuteTransaction()
         .setContractId(contractIdFromString(routerContractId))
         .setGas(config.gasLimit);

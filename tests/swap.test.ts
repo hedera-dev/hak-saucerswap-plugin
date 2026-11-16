@@ -247,3 +247,30 @@ describe("SwapTool explicit deadline integration", () => {
     expect(result).not.toHaveProperty("transaction");
   });
 });
+
+describe("SwapTool canonical recipient", () => {
+  it("encodes the mirror-provided ECDSA alias in the recipient slot", async () => {
+    const alias = "111122223333444455556666777788889999aaaa";
+    const result = await run(
+      { fromToken: "HBAR", toToken: SAUCE, amount: "1" },
+      makeContext({ mirror: createFakeMirror(pools, { accountEvmAddress: alias }) }),
+    );
+    if (!("transaction" in result)) throw new Error("Expected transaction");
+    const hex = Buffer.from(
+      (result.transaction as ContractExecuteTransaction).functionParameters ?? [],
+    ).toString("hex");
+    expect(hex.slice(8 + 64 * 2, 8 + 64 * 3)).toBe(alias.padStart(64, "0"));
+  });
+  it("does not construct a transaction when account resolution fails", async () => {
+    const mirror = createFakeMirror(pools);
+    mirror.getAccountEvmAddress = async () => {
+      throw new Error("canonical address unavailable");
+    };
+    const result = await run(
+      { fromToken: "HBAR", toToken: SAUCE, amount: "1" },
+      makeContext({ mirror }),
+    );
+    expect(result).toMatchObject({ success: false, error: "canonical address unavailable" });
+    expect(result).not.toHaveProperty("transaction");
+  });
+});

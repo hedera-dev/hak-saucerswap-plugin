@@ -17,11 +17,7 @@ import { findMissingAllowances } from "../utils/allowance";
 import { applySlippageToAmount } from "../utils/amm";
 import { resolveDeadline } from "../utils/deadline";
 import { prepareSwapQuote, resolveApiClients } from "../utils/swap-quote";
-import {
-  accountIdToSolidityAddress,
-  contractIdFromString,
-  tokenIdToSolidityAddress,
-} from "../utils/tokens";
+import { contractIdFromString, tokenIdToSolidityAddress } from "../utils/tokens";
 import { formatUnits, toUint256 } from "../utils/units";
 
 const swapInputSchema = z.object({
@@ -121,7 +117,7 @@ export class SwapTool extends BaseTool<SwapInput, SwapInput> {
 
       const minOutSmallest = applySlippageToAmount(quote.amountOut.toString(), slippageTolerance);
       const deadline = resolveDeadline(args, config.deadlineMinutes);
-      const recipient = accountIdToSolidityAddress(operatorAccountId);
+      const recipient = await mirror.getAccountEvmAddress(operatorAccountId);
       const path = quote.path.map(tokenIdToSolidityAddress);
 
       const transaction = new ContractExecuteTransaction()

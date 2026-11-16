@@ -77,7 +77,10 @@ export const resolveSaucerSwapConfig = (context?: unknown): SaucerSwapConfig => 
   return {
     ...DEFAULT_CONFIG,
     ...ctxConfig,
-    baseUrl: ctxConfig.baseUrl ?? process.env.SAUCERSWAP_BASE_URL ?? DEFAULT_CONFIG.baseUrl,
+    baseUrl:
+      ctxConfig.baseUrl ??
+      process.env.SAUCERSWAP_BASE_URL ??
+      (network === "testnet" ? "https://test-api.saucerswap.finance" : DEFAULT_CONFIG.baseUrl),
     timeoutMs:
       ctxConfig.timeoutMs ?? toNumber(process.env.SAUCERSWAP_TIMEOUT_MS, DEFAULT_CONFIG.timeoutMs),
     retries: ctxConfig.retries ?? toNumber(process.env.SAUCERSWAP_RETRIES, DEFAULT_CONFIG.retries),

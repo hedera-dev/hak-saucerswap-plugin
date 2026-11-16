@@ -1,4 +1,4 @@
-import { TokenId } from "@hiero-ledger/sdk";
+import { AccountId, TokenId } from "@hiero-ledger/sdk";
 
 const word = (value: bigint) => value.toString(16).padStart(64, "0");
 const addressWord = (address: string) => address.replace(/^0x/, "").padStart(64, "0");
@@ -26,7 +26,11 @@ const amountOut = (amountIn: bigint, reserveIn: bigint, reserveOut: bigint) =>
  */
 export const createFakeMirror = (
   pools: FakePool[],
-  options: { allowance?: bigint; decimals?: Record<string, number> } = {},
+  options: {
+    allowance?: bigint;
+    decimals?: Record<string, number>;
+    accountEvmAddress?: string;
+  } = {},
 ) => {
   const findPool = (a: string, b: string) =>
     pools.findIndex(
@@ -39,6 +43,9 @@ export const createFakeMirror = (
 
   return {
     calls,
+    async getAccountEvmAddress(accountId: string): Promise<string> {
+      return options.accountEvmAddress ?? AccountId.fromString(accountId).toEvmAddress();
+    },
     async contractCall(to: string, data: string): Promise<string> {
       const selector = data.slice(2, 10);
       calls.push(selector);

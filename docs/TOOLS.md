@@ -432,3 +432,13 @@ The SDK compatibility boundary uses its runtime decimal-string support instead
 of a `Long` or cross-package `BigNumber` instance. SDK upgrades require real
 transaction roundtrip coverage in ESM and CJS because current SDK declarations
 omit that supported runtime string input.
+
+### Canonical account addresses
+
+Transaction tools resolve the operator's canonical `evm_address` through the
+configured mirror node before building the recipient argument. Numeric account
+IDs must not be converted blindly to long-zero addresses: accounts with ECDSA
+EVM aliases need their persisted alias. Missing, malformed, deleted or mismatched
+account metadata fails closed instead of building a transaction to a guessed
+address. Custom injected mirror clients must implement `getAccountEvmAddress`.
+Token and router IDs continue to use their normal numeric address conversions.

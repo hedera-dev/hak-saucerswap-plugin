@@ -14,7 +14,7 @@ export type TokenLookup = Pick<
 >;
 export type MirrorLookup = Pick<
   MirrorNodeClient,
-  "contractCall" | "getTokenDecimals" | "getTokenAllowance"
+  "contractCall" | "getTokenDecimals" | "getTokenAllowance" | "getAccountEvmAddress"
 >;
 
 export interface ResolvedSwapToken {

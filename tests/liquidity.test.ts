@@ -274,3 +274,60 @@ describe("RemoveLiquidityTool.shouldSecondaryAction", () => {
     );
   });
 });
+
+describe("Liquidity canonical recipients", () => {
+  const alias = "111122223333444455556666777788889999aaaa";
+  it.each([
+    { add: true, tokenA: TOKEN_A, tokenB: TOKEN_B, slot: 6 },
+    { add: true, tokenA: "HBAR", tokenB: TOKEN_B, slot: 4 },
+    { add: true, tokenA: TOKEN_A, tokenB: "HBAR", slot: 4 },
+    { add: false, tokenA: TOKEN_A, tokenB: TOKEN_B, slot: 5 },
+    { add: false, tokenA: "HBAR", tokenB: TOKEN_B, slot: 4 },
+    { add: false, tokenA: TOKEN_A, tokenB: "HBAR", slot: 4 },
+  ])(
+    "encodes canonical address for $add $tokenA/$tokenB",
+    async ({ add, tokenA, tokenB, slot }) => {
+      const context = makeContext();
+      context.saucerswapMirrorClient.getAccountEvmAddress = async () => alias;
+      const tool = add ? new AddLiquidityTool() : new RemoveLiquidityTool();
+      const args = {
+        tokenA,
+        tokenB,
+        amountA: "1",
+        amountB: "1",
+        slippageTolerance: 0.5,
+        lpTokenAmount: "0.1",
+        minAmountA: "0.1",
+        minAmountB: "0.1",
+      };
+      const result = await tool.coreAction(args, context as never, makeClient(OPERATOR) as never);
+      const hex = Buffer.from(txOf(result).functionParameters ?? []).toString("hex");
+      expect(hex.slice(8 + slot * 64, 8 + (slot + 1) * 64)).toBe(alias.padStart(64, "0"));
+    },
+  );
+  it.each([new AddLiquidityTool(), new RemoveLiquidityTool()])(
+    "does not construct a transaction if canonical lookup fails",
+    async (tool) => {
+      const context = makeContext();
+      context.saucerswapMirrorClient.getAccountEvmAddress = async () => {
+        throw new Error("canonical address unavailable");
+      };
+      const result = await tool.coreAction(
+        {
+          tokenA: TOKEN_A,
+          tokenB: TOKEN_B,
+          amountA: "1",
+          amountB: "1",
+          slippageTolerance: 0.5,
+          lpTokenAmount: "0.1",
+          minAmountA: "0.1",
+          minAmountB: "0.1",
+        },
+        context as never,
+        makeClient(OPERATOR) as never,
+      );
+      expect(result).toMatchObject({ success: false, error: "canonical address unavailable" });
+      expect(result).not.toHaveProperty("transaction");
+    },
+  );
+});
