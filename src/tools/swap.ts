@@ -8,24 +8,24 @@ import {
   type Client,
   ContractExecuteTransaction,
   ContractFunctionParameters,
+  Hbar,
   type Transaction,
 } from "@hiero-ledger/sdk";
 import { z } from "zod";
-import { createSaucerSwapClient } from "../api/client";
 import { resolveSaucerSwapConfig } from "../config";
+import { findMissingAllowances } from "../utils/allowance";
 import { applySlippageToAmount } from "../utils/amm";
-import { normalizeSwapQuote } from "../utils/quote";
-import {
-  accountIdToSolidityAddress,
-  contractIdFromString,
-  normalizeTokenAlias,
-  requireTokenId,
-  tokenIdToSolidityAddress,
-} from "../utils/tokens";
-import { parseUnits, toUint256 } from "../utils/units";
+import { resolveDeadline } from "../utils/deadline";
+import { prepareSwapQuote, resolveApiClients } from "../utils/swap-quote";
+import { contractIdFromString, tokenIdToSolidityAddress } from "../utils/tokens";
+import { formatUnits, toUint256 } from "../utils/units";
 
 const swapInputSchema = z.object({
-  fromToken: z.string().describe("Token ID to swap from (e.g., 'HBAR' or '0.0.123456')"),
+  fromToken: z
+    .string()
+    .describe(
+      "Token to swap from: 'HBAR' for native HBAR, or a token ID/symbol. HTS tokens need a token allowance for the SaucerSwap V1 router first.",
+    ),
   toToken: z.string().describe("Token ID to swap to"),
   amount: z.string().describe("Amount to swap (decimal format)"),
   slippageTolerance: z
@@ -36,7 +36,19 @@ const swapInputSchema = z.object({
   deadline: z
     .number()
     .optional()
-    .describe("Transaction deadline in minutes from now or a unix timestamp"),
+    .describe("Deprecated ambiguous deadline; prefer deadlineMinutes or deadlineTimestamp."),
+  deadlineMinutes: z
+    .number()
+    .finite()
+    .positive()
+    .optional()
+    .describe("Deadline in minutes from now."),
+  deadlineTimestamp: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Absolute future Unix timestamp in seconds."),
 });
 
 type SwapInput = z.infer<typeof swapInputSchema>;
@@ -59,29 +71,11 @@ const isSwapCorePayload = (value: unknown): value is SwapCorePayload =>
 const swapPostProcess = (response: RawTransactionResponse) =>
   `SaucerSwap swap submitted. Status: ${response.status}. Transaction ID: ${response.transactionId}`;
 
-const resolveDeadline = (deadlineInput: number | undefined, defaultMinutes: number): number => {
-  const now = Math.floor(Date.now() / 1000);
-  if (!deadlineInput) {
-    return now + defaultMinutes * 60;
-  }
-  if (deadlineInput > now + 60) {
-    return Math.floor(deadlineInput);
-  }
-  return now + Math.round(deadlineInput) * 60;
-};
-
-const amountToSmallest = (amount: string, decimals: number): string => {
-  return parseUnits(amount, decimals);
-};
-
-const expectedToSmallest = (amount: string, decimals: number): string => {
-  return amount.includes(".") ? parseUnits(amount, decimals) : amount;
-};
-
 export class SwapTool extends BaseTool<SwapInput, SwapInput> {
   method = "saucerswap_swap_tokens";
   name = "SaucerSwap Swap Tokens";
-  description = "Execute a token swap on SaucerSwap DEX.";
+  description =
+    "Execute an exact-input token swap on the SaucerSwap V1 router. Supports HBAR and HTS tokens on either side. Swapping from an HTS token requires a prior token allowance for the router.";
   parameters = swapInputSchema;
 
   async normalizeParams(params: SwapInput, _context: Context, _client: Client): Promise<SwapInput> {
@@ -101,76 +95,65 @@ export class SwapTool extends BaseTool<SwapInput, SwapInput> {
     }
 
     try {
-      const api =
-        (context as { saucerswapClient?: ReturnType<typeof createSaucerSwapClient> })
-          .saucerswapClient ?? createSaucerSwapClient(config);
+      const { api, mirror } = resolveApiClients(context, config, client);
+      const { from, to, quote, routerContractId, expectedOutput, route } = await prepareSwapQuote({
+        fromToken: args.fromToken,
+        toToken: args.toToken,
+        amount: args.amount,
+        config,
+        api,
+        mirror,
+      });
 
-      const fromTokenAlias = normalizeTokenAlias(args.fromToken, config);
-      const toTokenAlias = normalizeTokenAlias(args.toToken, config);
-      const fromTokenId = await api.resolveTokenId(fromTokenAlias);
-      const toTokenId = await api.resolveTokenId(toTokenAlias);
-
-      const fromTokenMeta = await api.getTokenByIdOrSymbol(fromTokenId);
-      const toTokenMeta = await api.getTokenByIdOrSymbol(toTokenId);
-
-      if (!fromTokenMeta || !toTokenMeta) {
-        return {
-          success: false,
-          error: "Unable to resolve token metadata from SaucerSwap API.",
-        };
+      // Fail early with instructions instead of submitting a transaction that reverts.
+      if (!from.isHbar) {
+        const error = await findMissingAllowances(mirror, operatorAccountId, routerContractId, [
+          { tokenId: from.tokenId, amount: quote.amountIn, decimals: from.decimals },
+        ]);
+        if (error) {
+          return { success: false, error };
+        }
       }
 
-      const quote = normalizeSwapQuote(
-        await api.getSwapQuote({
-          fromToken: fromTokenId,
-          toToken: toTokenId,
-          amount: args.amount,
-        }),
-        args.amount,
-      );
-
-      const amountInSmallest = amountToSmallest(args.amount, fromTokenMeta.decimals);
-      const expectedOutSmallest = expectedToSmallest(quote.expectedOutput, toTokenMeta.decimals);
-      const minOutSmallest = applySlippageToAmount(expectedOutSmallest, slippageTolerance);
-
-      const routerContractId =
-        config.defaultPoolVersion === "v2"
-          ? (config.routerV2ContractId ?? config.routerContractId)
-          : (config.routerContractId ?? config.routerV2ContractId);
-
-      if (!routerContractId) {
-        return {
-          success: false,
-          error: "Missing SaucerSwap router contract ID configuration.",
-        };
-      }
-
-      const deadline = resolveDeadline(args.deadline, config.deadlineMinutes);
-      const toAddress = accountIdToSolidityAddress(operatorAccountId);
-      const path = [
-        tokenIdToSolidityAddress(requireTokenId(fromTokenId)),
-        tokenIdToSolidityAddress(requireTokenId(toTokenId)),
-      ];
-
-      const params = new ContractFunctionParameters()
-        .addUint256(toUint256(amountInSmallest))
-        .addUint256(toUint256(minOutSmallest))
-        .addAddressArray(path)
-        .addAddress(toAddress)
-        .addUint256(toUint256(deadline));
+      const minOutSmallest = applySlippageToAmount(quote.amountOut.toString(), slippageTolerance);
+      const deadline = resolveDeadline(args, config.deadlineMinutes);
+      const recipient = await mirror.getAccountEvmAddress(operatorAccountId);
+      const path = quote.path.map(tokenIdToSolidityAddress);
 
       const transaction = new ContractExecuteTransaction()
         .setContractId(contractIdFromString(routerContractId))
-        .setGas(config.gasLimit)
-        .setFunction("swapExactTokensForTokens", params);
+        .setGas(config.gasLimit);
+
+      if (from.isHbar) {
+        transaction
+          .setPayableAmount(Hbar.fromTinybars(quote.amountIn.toString()))
+          .setFunction(
+            "swapExactETHForTokens",
+            new ContractFunctionParameters()
+              .addUint256(toUint256(minOutSmallest))
+              .addAddressArray(path)
+              .addAddress(recipient)
+              .addUint256(toUint256(deadline)),
+          );
+      } else {
+        transaction.setFunction(
+          to.isHbar ? "swapExactTokensForETH" : "swapExactTokensForTokens",
+          new ContractFunctionParameters()
+            .addUint256(toUint256(quote.amountIn.toString()))
+            .addUint256(toUint256(minOutSmallest))
+            .addAddressArray(path)
+            .addAddress(recipient)
+            .addUint256(toUint256(deadline)),
+        );
+      }
 
       const payload: SwapCorePayload = {
         transaction,
         extras: {
-          estimatedOutput: quote.expectedOutput,
-          minOutput: minOutSmallest,
+          estimatedOutput: expectedOutput,
+          minOutput: formatUnits(minOutSmallest, to.decimals),
           priceImpact: quote.priceImpact,
-          route: quote.route,
+          route,
         },
       };
       return payload;

@@ -22,11 +22,11 @@ export const requireTokenId = (token: string): string => {
 };
 
 export const tokenIdToSolidityAddress = (tokenId: string): string => {
-  return TokenId.fromString(tokenId).toSolidityAddress();
+  return TokenId.fromString(tokenId).toEvmAddress();
 };
 
 export const accountIdToSolidityAddress = (accountId: string): string => {
-  return AccountId.fromString(accountId).toSolidityAddress();
+  return AccountId.fromString(accountId).toEvmAddress();
 };
 
 export const contractIdFromString = (contractId: string): ContractId => {
